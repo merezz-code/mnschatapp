@@ -94,7 +94,29 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       console.error('Erreur chargement messages privés:', error);
     }
   };
-
+  const handleDeleteMessage = (messageId: number) => {
+    Alert.alert(
+      "Supprimer le message",
+      "Voulez-vous vraiment supprimer ce message ? Cette action est irréversible.",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: () => {
+            try {
+              db.runSync('DELETE FROM private_messages WHERE id = ?', [messageId]);
+              loadMessages(); // recharge la liste
+              Alert.alert('Succès', 'Message supprimé');
+            } catch (error) {
+              console.error('Erreur suppression message:', error);
+              Alert.alert('Erreur', 'Impossible de supprimer le message');
+            }
+          }
+        }
+      ]
+    );
+  };
   const handleSendMessage = (
     content: string,
     type: 'text' | 'image' | 'file' | 'audio' = 'text',
@@ -252,6 +274,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     });
   };
 
+  // Dans renderMessage, remplace tout le return par ça :
+
   const renderMessage = ({ item }: { item: any }) => {
     const isMe = item.senderId === me.id;
 
@@ -263,7 +287,12 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             style={styles.senderAvatar}
           />
         )}
-        <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
+
+        <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
+          onLongPress={() => isMe && handleDeleteMessage(item.id)}
+          delayLongPress={500}
+        >
+          {/* Contenu du message */}
           {item.type === 'image' && item.imageUrl && (
             <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
           )}
@@ -281,7 +310,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             <View style={styles.audioContainer}>
               <Mic size={20} color={isMe ? '#fff' : '#2563eb'} />
               <Text style={[styles.audioText, isMe ? styles.myText : styles.theirText]}>
-                Message vocal • {recordingDuration}s
+                Message vocal
               </Text>
             </View>
           )}
@@ -290,9 +319,23 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             {item.content}
           </Text>
 
-          <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
-            {formatTime(item.timestamp)}
-          </Text>
+          {/* Ligne heure + corbeille */}
+          <View style={styles.bottomRow}>
+            <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
+              {formatTime(item.timestamp)}
+            </Text>
+
+            {/* 🗑️ Corbeille à côté de l'heure, seulement pour mes messages */}
+            {isMe && (
+              <TouchableOpacity
+                onPress={() => handleDeleteMessage(item.id)}
+                style={styles.trashTouch}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.trashIcon}>🗑️</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -542,6 +585,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 30,
   },
+  deleteIcon: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 12,
+    padding: 4,
+  },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
   blockBtn: {
     flexDirection: 'row',
@@ -552,6 +603,22 @@ const styles = StyleSheet.create({
     borderRadius: 15,
   },
   blockBtnText: { color: '#ef4444', fontWeight: 'bold', fontSize: 16 },
+  bottomRow: {
+  flexDirection: 'row',
+  justifyContent: 'flex-end',
+  alignItems: 'center',
+  marginTop: 6,
+},
+
+trashTouch: {
+  marginLeft: 12,
+  padding: 4,
+},
+
+trashIcon: {
+  fontSize: 16,
+  color: 'rgba(255,255,255,0.8)',
+},
 });
 
 export default ChatPrivateView;

@@ -17,7 +17,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [members, setMembers] = useState([]);
   const [admins, setAdmins] = useState([]);
-  
+
   const flatListRef = useRef(null);
   const recordingRef = useRef(null);
   const durationInterval = useRef(null);
@@ -28,7 +28,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
   useEffect(() => {
     loadMessages();
     loadMembers();
-    
+
     Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
@@ -65,10 +65,10 @@ const ChatRoomView = ({ room, me, onBack }) => {
         'SELECT user_id, role FROM group_members WHERE group_id = ?',
         [room.id]
       );
-      
+
       const memberIds = membersData.map(m => m.user_id);
       const adminIds = membersData.filter(m => m.role === 'admin').map(m => m.user_id);
-      
+
       setMembers(memberIds);
       setAdmins(adminIds);
     } catch (error) {
@@ -81,7 +81,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
     try {
       const timestamp = Date.now();
-      
+
       db.runSync(
         `INSERT INTO group_messages (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -102,7 +102,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       db.runSync('UPDATE groups SET lastUpdate = ? WHERE id = ?', [timestamp, room.id]);
 
       loadMessages();
-      
+
       // Scroll vers le bas
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -120,9 +120,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
       Alert.alert('Permission refusée', "Accès aux photos nécessaire.");
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({ 
-      mediaTypes: ['images'], 
-      quality: 0.7 
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.7
     });
     if (!result.canceled) {
       handleSendMessage("📷 Image", 'image', 'photo.jpg', result.assets[0].uri);
@@ -153,7 +153,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      
+
       recordingRef.current = recording;
       setIsRecording(true);
       setRecordingDuration(0);
@@ -179,7 +179,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
       await recordingRef.current.stopAndUnloadAsync();
       const uri = recordingRef.current.getURI();
-      
+
       if (uri) {
         handleSendMessage(`🎤 Message vocal (${recordingDuration}s)`, 'audio', 'audio.m4a', uri);
       }
@@ -224,8 +224,8 @@ const ChatRoomView = ({ room, me, onBack }) => {
       "Voulez-vous retirer ce membre du groupe ?",
       [
         { text: "Annuler", style: "cancel" },
-        { 
-          text: "Retirer", 
+        {
+          text: "Retirer",
           style: "destructive",
           onPress: () => {
             try {
@@ -318,27 +318,54 @@ const ChatRoomView = ({ room, me, onBack }) => {
     }
   };
 
+  const handleDeleteMessage = (messageId: number) => {
+    Alert.alert(
+      "Supprimer le message",
+      "Voulez-vous vraiment supprimer ce message ?",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer ",
+          style: "destructive",
+          onPress: () => {
+            try {
+              db.runSync('DELETE FROM group_messages WHERE id = ?', [messageId]);
+              loadMessages();
+              Alert.alert('Succès', 'Message supprimé');
+            } catch (error) {
+              Alert.alert('Erreur', 'Impossible de supprimer le message');
+            }
+          }
+        }
+      ]
+    );
+  };
   const renderMessage = ({ item }) => {
     const isMe = item.senderId === me.id;
     const sender = getUserInfo(item.senderId);
-    
+
     return (
       <View style={[styles.msgWrapper, isMe ? styles.myMsgWrapper : styles.theirMsgWrapper]}>
         {!isMe && (
-          <Image 
-            source={{ uri: sender.avatar }} 
-            style={styles.senderAvatar} 
+          <Image
+            source={{ uri: sender.avatar }}
+            style={styles.senderAvatar}
           />
         )}
-        <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
+
+        <View
+          style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
+          onLongPress={() => isMe && handleDeleteMessage(item.id)}
+          delayLongPress={500}
+        >
           {!isMe && (
             <Text style={styles.senderName}>{sender.username}</Text>
           )}
-          
+
           {item.type === 'image' && item.imageUrl && (
             <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
           )}
-          
+
           {item.type === 'file' && (
             <View style={styles.fileContainer}>
               <Paperclip size={20} color={isMe ? "#fff" : "#2563eb"} />
@@ -356,14 +383,28 @@ const ChatRoomView = ({ room, me, onBack }) => {
               </Text>
             </View>
           )}
-          
+
           <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
             {item.content}
           </Text>
-          
-          <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
-            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </Text>
+
+          {/* Ligne heure + corbeille */}
+          <View style={styles.bottomRow}>
+            <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
+              {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+
+            {/* 🗑️ Corbeille uniquement pour MES messages */}
+            {isMe && (
+              <TouchableOpacity
+                onPress={() => handleDeleteMessage(item.id)}
+                style={styles.trashTouch}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.trashIcon}>🗑️</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -388,7 +429,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
         </TouchableOpacity>
       </View>
 
-      <FlatList 
+      <FlatList
         ref={flatListRef}
         data={messages}
         renderItem={renderMessage}
@@ -397,7 +438,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
@@ -418,19 +459,19 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
                   <Paperclip size={20} color="#94a3b8" />
                 </TouchableOpacity>
-                <TextInput 
-                  style={styles.input} 
-                  placeholder="Message..." 
-                  value={inputText} 
-                  onChangeText={setInputText} 
-                  multiline 
+                <TextInput
+                  style={styles.input}
+                  placeholder="Message..."
+                  value={inputText}
+                  onChangeText={setInputText}
+                  multiline
                 />
                 <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
                   <ImageIcon size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity 
-                style={[styles.sendBtn, !inputText.trim() && styles.micBtn]} 
+              <TouchableOpacity
+                style={[styles.sendBtn, !inputText.trim() && styles.micBtn]}
                 onPress={() => {
                   if (inputText.trim()) {
                     handleSendMessage(inputText.trim());
@@ -461,15 +502,15 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <X size={24} color="#000" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView showsVerticalScrollIndicator={false}>
               {isAdmin && (
                 <View style={styles.settingItem}>
                   <Text style={styles.settingLabel}>Nom du groupe</Text>
-                  <TextInput 
-                    style={styles.settingInput} 
-                    value={editedName} 
-                    onChangeText={setEditedName} 
+                  <TextInput
+                    style={styles.settingInput}
+                    value={editedName}
+                    onChangeText={setEditedName}
                   />
                   <TouchableOpacity style={styles.saveBtn} onPress={handleSaveSettings}>
                     <Check size={20} color="#fff" />
@@ -477,7 +518,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   </TouchableOpacity>
                 </View>
               )}
-              
+
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Membres ({members.length})</Text>
                 {isAdmin && (
@@ -486,7 +527,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   </TouchableOpacity>
                 )}
               </View>
-              
+
               {members.map(memberId => {
                 const user = getUserInfo(memberId);
                 return (
@@ -501,8 +542,8 @@ const ChatRoomView = ({ room, me, onBack }) => {
                       </Text>
                     </View>
                     {isAdmin && memberId !== me.id && (
-                      <TouchableOpacity 
-                        onPress={() => handleRemoveMember(memberId)} 
+                      <TouchableOpacity
+                        onPress={() => handleRemoveMember(memberId)}
                         style={styles.removeMemberBtn}
                       >
                         <UserMinus size={20} color="#ef4444" />
@@ -511,13 +552,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   </View>
                 );
               })}
-              
+
               <View style={styles.actionsContainer}>
-                <TouchableOpacity style={styles.leaveBtn} onPress={handleLeaveRoom}>
-                  <LogOut size={20} color="#ef4444" />
-                  <Text style={styles.leaveBtnText}>Quitter le groupe</Text>
-                </TouchableOpacity>
-                
+                {!isAdmin && (
+                  <TouchableOpacity style={styles.leaveBtn} onPress={handleLeaveRoom}>
+                    <LogOut size={20} color="#ef4444" />
+                    <Text style={styles.leaveBtnText}>Quitter le groupe</Text>
+                  </TouchableOpacity>)}
+
                 {isAdmin && (
                   <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteRoom}>
                     <Trash2 size={20} color="#fff" />
@@ -541,9 +583,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
               </View>
               <ScrollView style={{ maxHeight: 400 }}>
                 {getAvailableUsers().map(u => (
-                  <TouchableOpacity 
-                    key={u.id} 
-                    style={styles.memberSelect} 
+                  <TouchableOpacity
+                    key={u.id}
+                    style={styles.memberSelect}
                     onPress={() => handleAddMember(u.id)}
                   >
                     <Image source={{ uri: u.avatar }} style={styles.memberAvatar} />
@@ -565,12 +607,12 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    padding: 15, 
-    backgroundColor: '#fff', 
-    borderBottomWidth: 1, 
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -589,48 +631,48 @@ const styles = StyleSheet.create({
   myMsgWrapper: { justifyContent: 'flex-end' },
   theirMsgWrapper: { justifyContent: 'flex-start' },
   senderAvatar: { width: 32, height: 32, borderRadius: 16, marginRight: 8 },
-  bubble: { 
-    maxWidth: '75%', 
-    padding: 12, 
+  bubble: {
+    maxWidth: '75%',
+    padding: 12,
     borderRadius: 18,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  myBubble: { 
-    backgroundColor: '#2563eb', 
+  myBubble: {
+    backgroundColor: '#2563eb',
     borderBottomRightRadius: 4,
     elevation: 2,
   },
-  theirBubble: { 
-    backgroundColor: '#fff', 
+  theirBubble: {
+    backgroundColor: '#fff',
     borderBottomLeftRadius: 4,
     elevation: 2,
   },
-  senderName: { 
-    fontSize: 12, 
-    fontWeight: '600', 
-    color: '#2563eb', 
-    marginBottom: 4 
+  senderName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+    marginBottom: 4
   },
   msgText: { fontSize: 15, lineHeight: 20 },
   myText: { color: '#fff' },
   theirText: { color: '#0f172a' },
-  msgImage: { 
-    width: 220, 
-    height: 160, 
-    borderRadius: 12, 
-    marginBottom: 6 
+  msgImage: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 6
   },
-  fileContainer: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    gap: 8, 
-    marginBottom: 6, 
-    padding: 10, 
-    backgroundColor: 'rgba(0,0,0,0.05)', 
-    borderRadius: 10 
+  fileContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+    padding: 10,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 10
   },
   fileText: { fontSize: 13, fontWeight: '500', flex: 1 },
   audioContainer: {
@@ -646,38 +688,38 @@ const styles = StyleSheet.create({
   msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
   myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
   theirTime: { color: '#94a3b8' },
-  inputSection: { 
-    flexDirection: 'row', 
-    padding: 12, 
-    alignItems: 'flex-end', 
-    backgroundColor: '#fff', 
-    borderTopWidth: 1, 
-    borderTopColor: '#f1f5f9' 
+  inputSection: {
+    flexDirection: 'row',
+    padding: 12,
+    alignItems: 'flex-end',
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9'
   },
-  inputContainer: { 
-    flex: 1, 
-    flexDirection: 'row', 
-    backgroundColor: '#f1f5f9', 
-    borderRadius: 25, 
-    paddingHorizontal: 12, 
-    alignItems: 'center', 
-    minHeight: 48 
+  inputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 25,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    minHeight: 48
   },
-  input: { 
-    flex: 1, 
-    paddingVertical: 10, 
-    paddingHorizontal: 8, 
+  input: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     fontSize: 15,
     maxHeight: 100,
   },
   attachBtn: { padding: 8 },
-  sendBtn: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 24, 
-    backgroundColor: '#2563eb', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
+  sendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginLeft: 10,
     shadowColor: '#2563eb',
     shadowOffset: { width: 0, height: 2 },
@@ -715,61 +757,61 @@ const styles = StyleSheet.create({
   stopBtn: {
     padding: 8,
   },
-  modalOverlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'flex-end' 
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end'
   },
-  modalContent: { 
-    backgroundColor: '#fff', 
-    borderTopLeftRadius: 30, 
-    borderTopRightRadius: 30, 
-    padding: 25, 
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 25,
     minHeight: '80%',
     maxHeight: '90%',
   },
-  innerModalOverlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.4)', 
-    justifyContent: 'center', 
-    padding: 20 
+  innerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20
   },
-  innerModalContent: { 
-    backgroundColor: '#fff', 
-    borderRadius: 20, 
+  innerModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
     padding: 20,
     maxHeight: '70%',
   },
-  modalHeader: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 20,
     paddingBottom: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
   },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-  sectionHeader: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginVertical: 20,
     marginTop: 25,
   },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#64748b' },
   addMemberBtn: { padding: 5 },
   settingItem: { marginBottom: 20 },
-  settingLabel: { 
-    fontSize: 14, 
-    fontWeight: '600', 
-    color: '#64748b', 
-    marginBottom: 8 
+  settingLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 8
   },
-  settingInput: { 
-    backgroundColor: '#f1f5f9', 
-    borderRadius: 15, 
-    padding: 15, 
+  settingInput: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 15,
+    padding: 15,
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -788,7 +830,23 @@ const styles = StyleSheet.create({
   leaveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, borderColor: '#ef4444', backgroundColor: '#fff', borderWidth: 1 },
   leaveBtnText: { color: '#ef4444', fontWeight: 'bold' },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, backgroundColor: '#ef4444' },
-  deleteBtnText: { color: '#fff', fontWeight: 'bold' }
+  deleteBtnText: { color: '#fff', fontWeight: 'bold' },
+  bottomRow: {
+  flexDirection: 'row',
+  justifyContent: 'flex-end',
+  alignItems: 'center',
+  marginTop: 6,
+},
+
+trashTouch: {
+  marginLeft: 12,
+  padding: 4,
+},
+
+trashIcon: {
+  fontSize: 16,
+  color: 'rgba(255,255,255,0.8)',
+},
 });
 
 export default ChatRoomView;

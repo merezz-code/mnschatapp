@@ -83,7 +83,7 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
           <MaterialIcons name="chat" size={40} color="white" />
         </View>
         <Text style={styles.title}>MNS ChatApp</Text>
-        <Text style={styles.subtitle}>Sécurisé par SQLite</Text>
+        <Text style={styles.subtitle}>Connectez-vous, discutez, partagez</Text>
       </View>
 
       <View style={styles.card}>
