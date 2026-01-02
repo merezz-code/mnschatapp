@@ -6,6 +6,7 @@ export const db = SQLite.openDatabaseSync('chatapp.db');
 
 export const initDatabase = () => {
     try {
+// Activer les clés étrangères
         db.execSync(`
       PRAGMA foreign_keys = ON;
 
@@ -37,17 +38,20 @@ export const initDatabase = () => {
         FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE
     );
 
-      CREATE TABLE IF NOT EXISTS group_messages (
+     CREATE TABLE IF NOT EXISTS group_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id TEXT NOT NULL,
         sender_id TEXT NOT NULL,
         content TEXT,
-        image_url TEXT,
+        type TEXT DEFAULT 'text',           -- ← AJOUTÉ
+        file_name TEXT,                     -- ← AJOUTÉ
         file_url TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        image_url TEXT,
+        audio_url TEXT,                     -- ← AJOUTÉ (tu l'utilises dans l'INSERT)
+        timestamp INTEGER DEFAULT (strftime('%s', 'now')), -- mieux pour React Native que DATETIME
         FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE,
         FOREIGN KEY (sender_id) REFERENCES users (id)
-      );
+        );
 
       CREATE TABLE IF NOT EXISTS private_messages (
         id TEXT PRIMARY KEY NOT NULL,
