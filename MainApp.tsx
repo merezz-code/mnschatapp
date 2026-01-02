@@ -1,45 +1,66 @@
+// MainApp.tsx (version corrigée complète)
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, SafeAreaView, StatusBar, StyleSheet, Platform, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Platform,
+  TouchableOpacity,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ChatList from './components/ChatList';
 import ContactList from './components/ContactList';
 import ProfileView from './components/ProfileView';
 import ChatRoomView from './components/ChatRoomView';
+import ChatPrivateView from './components/ChatPrivateView'; // ← Ajouté
 import * as SQLite from 'expo-sqlite';
 
 const db = SQLite.openDatabaseSync('chatapp.db');
 
 export default function MainApp({ me, onLogout }) {
   const [currentTab, setCurrentTab] = useState('CHATS');
-  const [activeRoom, setActiveRoom] = useState(null);
+  const [activeRoom, setActiveRoom] = useState<any>(null);           // Pour les groupes
+  const [activePrivateChat, setActivePrivateChat] = useState<any>(null); // ← NOUVEAU : Pour les chats privés
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [rooms, setRooms] = useState([]);
+  const [rooms, setRooms] = useState<any[]>([]);
 
   const fetchRooms = useCallback(() => {
     try {
       const allRooms = db.getAllSync('SELECT * FROM groups ORDER BY lastUpdate DESC');
       setRooms(allRooms);
     } catch (e) {
-      console.error("Erreur chargement salons:", e);
+      console.error('Erreur chargement salons:', e);
     }
   }, []);
 
   useEffect(() => {
     fetchRooms();
-  }, []);
+  }, [fetchRooms]);
 
-  const handleCreateRoom = (newRoom) => {
+  const handleCreateRoom = (newRoom: any) => {
     try {
       db.runSync(
         'INSERT INTO groups (id, name, avatar, is_private, created_by, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)',
-        [newRoom.id, newRoom.name, newRoom.avatar, newRoom.is_private, newRoom.created_by, newRoom.lastUpdate]
+        [
+          newRoom.id,
+          newRoom.name,
+          newRoom.avatar,
+          newRoom.is_private,
+          newRoom.created_by,
+          newRoom.lastUpdate,
+        ]
       );
       db.runSync(
         'INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
         [newRoom.id, me.id, 'admin']
       );
       fetchRooms();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const theme = {
@@ -47,10 +68,11 @@ export default function MainApp({ me, onLogout }) {
     tabBar: isDarkMode ? '#1e293b' : '#ffffff',
     active: '#2563eb',
     inactive: '#94a3b8',
-    border: isDarkMode ? '#334155' : '#e2e8f0'
+    border: isDarkMode ? '#334155' : '#e2e8f0',
   };
 
   const renderContent = () => {
+    // Chat groupe ouvert
     if (activeRoom) {
       return (
         <ChatRoomView
@@ -64,31 +86,35 @@ export default function MainApp({ me, onLogout }) {
       );
     }
 
+    // ← NOUVEAU : Chat privé ouvert
+    if (activePrivateChat) {
+      return (
+        <ChatPrivateView
+          chatWith={activePrivateChat}
+          me={me}
+          onBack={() => setActivePrivateChat(null)}
+          onBlockUser={() => setActivePrivateChat(null)} // Retour à la liste après blocage
+        />
+      );
+    }
+
+    // Onglets normaux
     switch (currentTab) {
       case 'CHATS':
-        return (
-          <ChatList
-            rooms={rooms}
-            me={me}
-            onNavigate={setActiveRoom}
-            onCreateRoom={handleCreateRoom}
-            isDarkMode={isDarkMode}
-            onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-          />
-        );
+  return (
+    <ChatList
+      me={me}
+      onNavigate={setActiveRoom}           // ← groupes → ChatRoomView
+      onOpenPrivateChat={setActivePrivateChat} // ← privés → ChatPrivateView
+      isDarkMode={isDarkMode}
+      onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+    />
+  );
       case 'CONTACTS':
         return (
           <ContactList
             me={me}
-            onStartChat={(u) =>
-              setActiveRoom({
-                id: `dm_${u.id}`,
-                type: 'DIRECT',
-                participants: [me.id, u.id],
-                username: u.username,
-                avatar: u.avatar
-              })
-            }
+            onStartChat={(user) => setActivePrivateChat(user)} // ← Ouvre un privé → ChatPrivateView
           />
         );
       case 'PROFILE':
@@ -103,7 +129,8 @@ export default function MainApp({ me, onLogout }) {
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <View style={styles.main}>{renderContent()}</View>
 
-      {!activeRoom && (
+      {/* Tab bar visible seulement quand aucun chat n'est ouvert */}
+      {!activeRoom && !activePrivateChat && (
         <View style={[styles.tabBar, { backgroundColor: theme.tabBar, borderTopColor: theme.border }]}>
           <TabButton
             label="Messages"
@@ -132,14 +159,16 @@ export default function MainApp({ me, onLogout }) {
   );
 }
 
-const TabButton = ({ label, icon, active, onPress, theme }) => (
-  <TouchableOpacity
-    style={styles.tabItem}
-    onPress={onPress} // <-- maintenant le clic fonctionne !
-    activeOpacity={0.7}
-  >
-    <Ionicons name={active ? icon : `${icon}-outline`} size={24} color={active ? theme.active : theme.inactive} />
-    <Text style={[styles.tabLabel, { color: active ? theme.active : theme.inactive }]}>{label}</Text>
+const TabButton = ({ label, icon, active, onPress, theme }: any) => (
+  <TouchableOpacity style={styles.tabItem} onPress={onPress} activeOpacity={0.7}>
+    <Ionicons
+      name={active ? icon : `${icon}-outline`}
+      size={24}
+      color={active ? theme.active : theme.inactive}
+    />
+    <Text style={[styles.tabLabel, { color: active ? theme.active : theme.inactive }]}>
+      {label}
+    </Text>
   </TouchableOpacity>
 );
 
@@ -151,8 +180,8 @@ const styles = StyleSheet.create({
     height: Platform.OS === 'ios' ? 85 : 70,
     borderTopWidth: 1,
     paddingBottom: Platform.OS === 'ios' ? 20 : 10,
-    alignItems: 'center'
+    alignItems: 'center',
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  tabLabel: { fontSize: 10, fontWeight: 'bold', marginTop: 4 }
+  tabLabel: { fontSize: 10, fontWeight: 'bold', marginTop: 4 },
 });

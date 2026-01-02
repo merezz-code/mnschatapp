@@ -1,23 +1,34 @@
 import React, { useState } from 'react';
 import { View } from 'react-native';
 import ContactList from './ContactList';
-import ChatPrivateView from './ChatPrivateView';
+import ChatPrivateView from './ChatPrivateView'; // Assure-toi que le chemin est correct
 
 const ChatWrapper = ({ me }) => {
-  const [activeChat, setActiveChat] = useState<any>(null); // null = liste contacts, sinon contact sélectionné
+  const [activeChat, setActiveChat] = useState<any>(null); // null = liste, sinon = user sélectionné
 
   const handleStartChat = (user: any) => {
-    setActiveChat(user); // ouvre ChatPrivate avec ce contact
+    setActiveChat(user);
   };
 
   const handleBackFromChat = () => {
-    setActiveChat(null); // retourne à la liste des contacts
+    setActiveChat(null);
+  };
+
+  const handleBlockUser = (userId: string) => {
+    // Cette fonction sera appelée depuis ChatPrivateView
+    // Tu peux ici recharger les contacts si besoin
+    handleBackFromChat();
   };
 
   return (
     <View style={{ flex: 1 }}>
       {activeChat ? (
-        <ChatPrivateView chatWith={activeChat} me={me} onBack={handleBackFromChat} />
+        <ChatPrivateView
+          chatWith={activeChat}      // l'utilisateur avec qui on discute
+          me={me}
+          onBack={handleBackFromChat}
+          onBlockUser={handleBlockUser} // optionnel, si tu veux gérer le blocage depuis le chat
+        />
       ) : (
         <ContactList me={me} onStartChat={handleStartChat} />
       )}

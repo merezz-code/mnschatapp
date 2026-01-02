@@ -7,6 +7,7 @@ export const db = SQLite.openDatabaseSync('chatapp.db');
 export const initDatabase = () => {
     try {
 // Activer les clés étrangères
+        //db.execSync('drop table if exists private_messages;');
         db.execSync(`
       PRAGMA foreign_keys = ON;
 
@@ -54,17 +55,35 @@ export const initDatabase = () => {
         );
 
       CREATE TABLE IF NOT EXISTS private_messages (
-        id TEXT PRIMARY KEY NOT NULL,
-        sender_id TEXT NOT NULL,
-        receiver_id TEXT NOT NULL,
-        content TEXT,
-        image_url TEXT,
-        file_url TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        is_read INTEGER DEFAULT 0,
-        FOREIGN KEY (sender_id) REFERENCES users (id),
-        FOREIGN KEY (receiver_id) REFERENCES users (id)
-      );
+  id INTEGER PRIMARY KEY AUTOINCREMENT,      -- Changé en INTEGER AUTOINCREMENT pour simplicité
+  sender_id TEXT NOT NULL,
+  receiver_id TEXT NOT NULL,
+  content TEXT,
+  type TEXT DEFAULT 'text',                  -- AJOUTÉ : text | image | file | audio
+  file_name TEXT,                            -- AJOUTÉ
+  file_url TEXT,
+  image_url TEXT,
+  audio_url TEXT,                            -- AJOUTÉ
+  timestamp INTEGER DEFAULT (strftime('%s', 'now')),  -- Timestamp Unix en secondes
+  is_read INTEGER DEFAULT 0
+);
+
+-- Index pour accélérer les requêtes par conversation
+CREATE INDEX IF NOT EXISTS idx_private_messages_conversation 
+ON private_messages (sender_id, receiver_id, timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_private_messages_pair 
+ON private_messages (
+  CASE 
+    WHEN sender_id < receiver_id THEN sender_id 
+    ELSE receiver_id 
+  END,
+  CASE 
+    WHEN sender_id < receiver_id THEN receiver_id 
+    ELSE sender_id 
+  END,
+  timestamp
+);
 
       CREATE TABLE IF NOT EXISTS blocks (
         blocker_id TEXT NOT NULL,
