@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, Modal, Alert, ScrollView } from 'react-native';
-import { ArrowLeft, Send, Mic, Phone, Paperclip, ImageIcon, Settings, X, Check, UserPlus, LogOut, Trash2, UserMinus, StopCircle } from 'lucide-react-native';
+import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -98,12 +98,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
         ]
       );
 
-      // Mettre à jour lastUpdate du groupe
       db.runSync('UPDATE groups SET lastUpdate = ? WHERE id = ?', [timestamp, room.id]);
-
       loadMessages();
 
-      // Scroll vers le bas
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -196,7 +193,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       db.runSync('UPDATE groups SET name = ?, lastUpdate = ? WHERE id = ?', [editedName, Date.now(), room.id]);
       Alert.alert('Succès', 'Nom du groupe modifié');
       setShowSettings(false);
-      room.name = editedName; // Mise à jour locale
+      room.name = editedName;
     } catch (error) {
       console.error('Erreur mise à jour:', error);
       Alert.alert('Erreur', 'Impossible de modifier le nom');
@@ -318,14 +315,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
     }
   };
 
-  const handleDeleteMessage = (messageId: number) => {
+  const handleDeleteMessage = (messageId) => {
     Alert.alert(
       "Supprimer le message",
       "Voulez-vous vraiment supprimer ce message ?",
       [
         { text: "Annuler", style: "cancel" },
         {
-          text: "Supprimer ",
+          text: "Supprimer",
           style: "destructive",
           onPress: () => {
             try {
@@ -340,6 +337,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       ]
     );
   };
+
   const renderMessage = ({ item }) => {
     const isMe = item.senderId === me.id;
     const sender = getUserInfo(item.senderId);
@@ -347,16 +345,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
     return (
       <View style={[styles.msgWrapper, isMe ? styles.myMsgWrapper : styles.theirMsgWrapper]}>
         {!isMe && (
-          <Image
-            source={{ uri: sender.avatar }}
-            style={styles.senderAvatar}
-          />
+          <Image source={{ uri: sender.avatar }} style={styles.senderAvatar} />
         )}
 
-        <View
+        <TouchableOpacity
           style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
           onLongPress={() => isMe && handleDeleteMessage(item.id)}
           delayLongPress={500}
+          activeOpacity={0.9}
         >
           {!isMe && (
             <Text style={styles.senderName}>{sender.username}</Text>
@@ -368,7 +364,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
           {item.type === 'file' && (
             <View style={styles.fileContainer}>
-              <Paperclip size={20} color={isMe ? "#fff" : "#2563eb"} />
+              <MaterialIcons name="attach-file" size={20} color={isMe ? "#fff" : "#2563eb"} />
               <Text style={[styles.fileText, isMe ? styles.myText : styles.theirText]}>
                 {item.fileName || 'Fichier'}
               </Text>
@@ -377,7 +373,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
           {item.type === 'audio' && (
             <View style={styles.audioContainer}>
-              <Mic size={20} color={isMe ? "#fff" : "#2563eb"} />
+              <Ionicons name="mic" size={20} color={isMe ? "#fff" : "#2563eb"} />
               <Text style={[styles.audioText, isMe ? styles.myText : styles.theirText]}>
                 Message vocal
               </Text>
@@ -388,24 +384,22 @@ const ChatRoomView = ({ room, me, onBack }) => {
             {item.content}
           </Text>
 
-          {/* Ligne heure + corbeille */}
           <View style={styles.bottomRow}>
             <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
               {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
 
-            {/* 🗑️ Corbeille uniquement pour MES messages */}
             {isMe && (
               <TouchableOpacity
                 onPress={() => handleDeleteMessage(item.id)}
                 style={styles.trashTouch}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Text style={styles.trashIcon}>🗑️</Text>
+                <MaterialIcons name="delete-outline" size={16} color="rgba(255,255,255,0.8)" />
               </TouchableOpacity>
             )}
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -414,7 +408,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <ArrowLeft size={24} color="#0f172a" />
+          <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
         </TouchableOpacity>
         <Image source={{ uri: room.avatar || 'https://picsum.photos/200' }} style={styles.avatar} />
         <View style={styles.headerInfo}>
@@ -422,10 +416,10 @@ const ChatRoomView = ({ room, me, onBack }) => {
           <Text style={styles.status}>{members.length} membres</Text>
         </View>
         <TouchableOpacity onPress={handleCall} style={styles.headerAction}>
-          <Phone size={22} color="#2563eb" />
+          <MaterialIcons name="call" size={22} color="#2563eb" />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerAction}>
-          <Settings size={22} color="#64748b" />
+          <MaterialIcons name="settings" size={22} color="#64748b" />
         </TouchableOpacity>
       </View>
 
@@ -450,14 +444,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <Text style={styles.recordingText}>Enregistrement... {formatDuration(recordingDuration)}</Text>
               </View>
               <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
-                <StopCircle size={28} color="#ef4444" />
+                <MaterialIcons name="stop-circle" size={32} color="#ef4444" />
               </TouchableOpacity>
             </View>
           ) : (
             <>
               <View style={styles.inputContainer}>
                 <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
-                  <Paperclip size={20} color="#94a3b8" />
+                  <MaterialIcons name="attach-file" size={20} color="#94a3b8" />
                 </TouchableOpacity>
                 <TextInput
                   style={styles.input}
@@ -467,7 +461,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   multiline
                 />
                 <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
-                  <ImageIcon size={20} color="#94a3b8" />
+                  <MaterialIcons name="image" size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
               <TouchableOpacity
@@ -482,9 +476,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 }}
               >
                 {inputText.trim() ? (
-                  <Send size={24} color="#fff" />
+                  <MaterialIcons name="send" size={24} color="#fff" />
                 ) : (
-                  <Mic size={24} color="#fff" />
+                  <MaterialIcons name="mic" size={24} color="#fff" />
                 )}
               </TouchableOpacity>
             </>
@@ -499,7 +493,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Gestion du Groupe</Text>
               <TouchableOpacity onPress={() => setShowSettings(false)}>
-                <X size={24} color="#000" />
+                <MaterialIcons name="close" size={24} color="#000" />
               </TouchableOpacity>
             </View>
 
@@ -513,7 +507,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                     onChangeText={setEditedName}
                   />
                   <TouchableOpacity style={styles.saveBtn} onPress={handleSaveSettings}>
-                    <Check size={20} color="#fff" />
+                    <MaterialIcons name="check" size={20} color="#fff" />
                     <Text style={styles.saveBtnText}>Sauvegarder</Text>
                   </TouchableOpacity>
                 </View>
@@ -523,7 +517,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <Text style={styles.sectionTitle}>Membres ({members.length})</Text>
                 {isAdmin && (
                   <TouchableOpacity onPress={() => setShowAddMember(true)} style={styles.addMemberBtn}>
-                    <UserPlus size={20} color="#2563eb" />
+                    <MaterialIcons name="person-add" size={20} color="#2563eb" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -546,7 +540,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                         onPress={() => handleRemoveMember(memberId)}
                         style={styles.removeMemberBtn}
                       >
-                        <UserMinus size={20} color="#ef4444" />
+                        <MaterialIcons name="person-remove" size={20} color="#ef4444" />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -556,13 +550,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
               <View style={styles.actionsContainer}>
                 {!isAdmin && (
                   <TouchableOpacity style={styles.leaveBtn} onPress={handleLeaveRoom}>
-                    <LogOut size={20} color="#ef4444" />
+                    <MaterialIcons name="logout" size={20} color="#ef4444" />
                     <Text style={styles.leaveBtnText}>Quitter le groupe</Text>
-                  </TouchableOpacity>)}
+                  </TouchableOpacity>
+                )}
 
                 {isAdmin && (
                   <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteRoom}>
-                    <Trash2 size={20} color="#fff" />
+                    <MaterialIcons name="delete" size={20} color="#fff" />
                     <Text style={styles.deleteBtnText}>Supprimer le groupe</Text>
                   </TouchableOpacity>
                 )}
@@ -578,7 +573,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Ajouter un membre</Text>
                 <TouchableOpacity onPress={() => setShowAddMember(false)}>
-                  <X size={24} color="#000" />
+                  <MaterialIcons name="close" size={24} color="#000" />
                 </TouchableOpacity>
               </View>
               <ScrollView style={{ maxHeight: 400 }}>
@@ -590,7 +585,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   >
                     <Image source={{ uri: u.avatar }} style={styles.memberAvatar} />
                     <Text style={styles.memberName}>{u.username}</Text>
-                    <UserPlus size={20} color="#2563eb" />
+                    <MaterialIcons name="person-add" size={20} color="#2563eb" />
                   </TouchableOpacity>
                 ))}
                 {getAvailableUsers().length === 0 && (
@@ -816,7 +811,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-
   saveBtn: { backgroundColor: '#2563eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 15, gap: 10, marginTop: 10 },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
   memberItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 10, backgroundColor: '#f8fafc', borderRadius: 15 },
@@ -832,21 +826,15 @@ const styles = StyleSheet.create({
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, backgroundColor: '#ef4444' },
   deleteBtnText: { color: '#fff', fontWeight: 'bold' },
   bottomRow: {
-  flexDirection: 'row',
-  justifyContent: 'flex-end',
-  alignItems: 'center',
-  marginTop: 6,
-},
-
-trashTouch: {
-  marginLeft: 12,
-  padding: 4,
-},
-
-trashIcon: {
-  fontSize: 16,
-  color: 'rgba(255,255,255,0.8)',
-},
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  trashTouch: {
+    marginLeft: 12,
+    padding: 4,
+  },
+  emptyText: { textAlign: 'center', color: '#94a3b8', padding: 20 },
 });
-
 export default ChatRoomView;

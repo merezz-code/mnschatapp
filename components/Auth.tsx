@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, Alert, KeyboardAvoidingView, Platform
+} from 'react-native';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import * as SQLite from 'expo-sqlite';
+import * as Crypto from 'expo-crypto';
 
 const db = SQLite.openDatabaseSync('chatapp.db');
 
@@ -9,165 +13,186 @@ interface AuthProps {
   onLoginSuccess: (user: any) => void;
 }
 
+/* ================= UTILITAIRES ================= */
+
+// 🔐 Hash password (SHA-256)
+const hashPassword = async (password: string) => {
+  return await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    password
+  );
+};
+
+// 📧 Validation email
+const isValidEmail = (email: string) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+// 🔑 Validation mot de passe
+const isStrongPassword = (password: string) =>
+  password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
+
+/* ================= COMPONENT ================= */
+
 const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleSubmit = () => {
-    // 1. Validation de base
+  const handleSubmit = async () => {
     if (!email || !password || (!isLogin && !name)) {
-      Alert.alert("Attention", "Veuillez remplir tous les champs.");
+      Alert.alert("Erreur", "Tous les champs sont obligatoires.");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      Alert.alert("Erreur", "Adresse email invalide.");
+      return;
+    }
+
+    if (!isStrongPassword(password)) {
+      Alert.alert(
+        "Mot de passe faible",
+        "Minimum 8 caractères avec au moins une lettre et un chiffre."
+      );
       return;
     }
 
     const cleanEmail = email.toLowerCase().trim();
+    const hashedPassword = await hashPassword(password);
 
     try {
       if (isLogin) {
-        // --- LOGIQUE DE CONNEXION : Vérifie Email ET Mot de passe ---
-        const userFound = db.getFirstSync(
+        // 🔐 LOGIN
+        const user = db.getFirstSync(
           'SELECT * FROM users WHERE email = ? AND password = ? LIMIT 1',
-          [cleanEmail, password]
+          [cleanEmail, hashedPassword]
         );
-        
-        if (userFound) {
-          onLoginSuccess(userFound);
-        } else {
-          // Aide l'utilisateur en vérifiant si l'email existe du tout
-          const emailExists = db.getFirstSync('SELECT id FROM users WHERE email = ?', [cleanEmail]);
-          if (!emailExists) {
-            Alert.alert("Erreur", "Aucun compte trouvé avec cet email.");
-          } else {
-            Alert.alert("Erreur", "Mot de passe incorrect.");
-          }
-        }
-      } else {
-        // --- LOGIQUE D'INSCRIPTION : Enregistre l'email et le password ---
-        const userId = Math.random().toString(36).substring(2, 11);
-        const usernameFromEmail = cleanEmail.split('@')[0];
-        const avatarUrl = `https://i.pravatar.cc/150?u=${userId}`;
 
-        // Vérification si l'email est déjà pris
-        const existingUser = db.getFirstSync('SELECT id FROM users WHERE email = ?', [cleanEmail]);
-        
-        if (existingUser) {
+        if (!user) {
+          Alert.alert("Erreur", "Email ou mot de passe incorrect.");
+          return;
+        }
+
+        onLoginSuccess(user);
+
+      } else {
+        // 🔐 REGISTER
+        const exists = db.getFirstSync(
+          'SELECT id FROM users WHERE email = ?',
+          [cleanEmail]
+        );
+
+        if (exists) {
           Alert.alert("Erreur", "Cet email est déjà utilisé.");
           return;
         }
 
-        // Insertion dans la base avec le champ 'password'
+        const userId = Math.random().toString(36).substring(2, 11);
+        const avatar = `https://i.pravatar.cc/150?u=${userId}`;
+
         db.runSync(
-          'INSERT INTO users (id, username, email, password, avatar, bio) VALUES (?, ?, ?, ?, ?, ?)',
-          [userId, name || usernameFromEmail, cleanEmail, password, avatarUrl, "Disponible"]
+          `INSERT INTO users (id, username, email, password, avatar, bio)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [userId, name, cleanEmail, hashedPassword, avatar, "Disponible"]
         );
 
-        const newUser = { id: userId, username: name || usernameFromEmail, avatar: avatarUrl, email: cleanEmail };
-        Alert.alert("Succès", "Compte créé !");
-        onLoginSuccess(newUser);
+        Alert.alert("Succès", "Compte créé avec succès !");
+        onLoginSuccess({
+          id: userId,
+          username: name,
+          email: cleanEmail,
+          avatar
+        });
       }
+
     } catch (error) {
-      console.error("Erreur Auth:", error);
-      Alert.alert("Erreur", "Impossible d'accéder à la base de données. Assurez-vous d'avoir réinitialisé l'app pour inclure la colonne 'password'.");
+      console.error(error);
+      Alert.alert("Erreur", "Problème lors de l'authentification.");
     }
   };
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <View style={styles.header}>
-        <View style={styles.logoContainer}>
-          <MaterialIcons name="chat" size={40} color="white" />
-        </View>
+        <MaterialIcons name="chat" size={40} color="white" />
         <Text style={styles.title}>MNS ChatApp</Text>
-        <Text style={styles.subtitle}>Connectez-vous, discutez, partagez</Text>
+        <Text style={styles.subtitle}>
+         Connectez-vous, discutez, partagez !
+        </Text>
       </View>
 
       <View style={styles.card}>
-        <View style={styles.tabContainer}>
-          <TouchableOpacity 
-            style={[styles.tab, isLogin && styles.activeTab]} 
+        <View style={styles.tabs}>
+          <TouchableOpacity
+            style={[styles.tab, isLogin && styles.active]}
             onPress={() => setIsLogin(true)}
           >
-            <Text style={[styles.tabText, isLogin && styles.activeTabText]}>Connexion</Text>
+            <Text style={isLogin ? styles.activeText : styles.text}>Connexion</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.tab, !isLogin && styles.activeTab]} 
+          <TouchableOpacity
+            style={[styles.tab, !isLogin && styles.active]}
             onPress={() => setIsLogin(false)}
           >
-            <Text style={[styles.tabText, !isLogin && styles.activeTabText]}>Inscription</Text>
+            <Text style={!isLogin ? styles.activeText : styles.text}>Inscription</Text>
           </TouchableOpacity>
         </View>
 
         {!isLogin && (
-          <View style={styles.inputWrapper}>
-            <Ionicons name="person-outline" size={20} color="#94a3b8" style={styles.icon} />
-            <TextInput
-              placeholder="Nom complet"
-              placeholderTextColor="#94a3b8"
-              value={name}
-              onChangeText={setName}
-              style={styles.input}
-            />
-          </View>
+          <TextInput
+            placeholder="Nom complet"
+            style={styles.input}
+            value={name}
+            onChangeText={setName}
+          />
         )}
 
-        <View style={styles.inputWrapper}>
-          <MaterialIcons name="mail-outline" size={20} color="#94a3b8" style={styles.icon} />
-          <TextInput
-            placeholder="Email"
-            placeholderTextColor="#94a3b8"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            style={styles.input}
-          />
-        </View>
+        <TextInput
+          placeholder="Email"
+          style={styles.input}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+        />
 
-        <View style={styles.inputWrapper}>
-          <MaterialIcons name="lock-outline" size={20} color="#94a3b8" style={styles.icon} />
-          <TextInput
-            placeholder="Mot de passe"
-            placeholderTextColor="#94a3b8"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry // Cache le mot de passe
-            style={styles.input}
-          />
-        </View>
+        <TextInput
+          placeholder="Mot de passe"
+          style={styles.input}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
 
-        <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-          <Text style={styles.submitButtonText}>
+        <TouchableOpacity style={styles.button} onPress={handleSubmit}>
+          <Text style={styles.buttonText}>
             {isLogin ? 'Se connecter' : "S'inscrire"}
           </Text>
-          <MaterialIcons name="arrow-forward" size={20} color="white" />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#2563eb', padding: 20, justifyContent: 'center' },
-  header: { alignItems: 'center', marginBottom: 30 },
-  logoContainer: { width: 70, height: 70, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
-  title: { fontSize: 28, fontWeight: '900', color: 'white' },
-  subtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 14 },
-  card: { backgroundColor: 'white', borderRadius: 25, padding: 20, elevation: 4 },
-  tabContainer: { flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 12, padding: 4, marginBottom: 20 },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
-  activeTab: { backgroundColor: 'white' },
-  tabText: { color: '#64748b', fontWeight: 'bold' },
-  activeTabText: { color: '#2563eb' },
-  inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 12, marginBottom: 12, paddingHorizontal: 15, borderWidth: 1, borderColor: '#e2e8f0' },
-  icon: { marginRight: 10 },
-  input: { flex: 1, paddingVertical: 12, color: '#0f172a' },
-  submitButton: { backgroundColor: '#2563eb', borderRadius: 12, padding: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10 },
-  submitButtonText: { color: 'white', fontWeight: 'bold', marginRight: 10 }
-});
-
 export default Auth;
+
+/* ================= STYLES ================= */
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#2563eb', justifyContent: 'center', padding: 20 },
+  header: { alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 26, fontWeight: 'bold', color: 'white' },
+  subtitle: { color: '#e0e7ff', fontSize: 13 },
+  card: { backgroundColor: 'white', borderRadius: 20, padding: 20 },
+  tabs: { flexDirection: 'row', marginBottom: 15 },
+  tab: { flex: 1, padding: 10, alignItems: 'center' },
+  active: { borderBottomWidth: 2, borderColor: '#2563eb' },
+  text: { color: '#64748b' },
+  activeText: { color: '#2563eb', fontWeight: 'bold' },
+  input: { backgroundColor: '#f1f5f9', borderRadius: 10, padding: 12, marginBottom: 10 },
+  button: { backgroundColor: '#2563eb', padding: 15, borderRadius: 10 },
+  buttonText: { color: 'white', fontWeight: 'bold', textAlign: 'center' }
+});
