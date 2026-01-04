@@ -6,21 +6,24 @@ export const db = SQLite.openDatabaseSync('chatapp.db');
 
 export const initDatabase = () => {
     try {
-// Activer les clés étrangères
-        //db.execSync('drop table if exists private_messages;');
+        // Activer les clés étrangères
+        //db.execSync('drop table if exists users;');
         db.execSync(`
       PRAGMA foreign_keys = ON;
 
-      CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY NOT NULL,
-            username TEXT NOT NULL,
-            email TEXT UNIQUE, 
-            password TEXT,
-            avatar TEXT,
-            bio TEXT,
-            is_online INTEGER DEFAULT 0,
-            last_seen DATETIME
-        );
+     CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY NOT NULL,
+    username TEXT NOT NULL,
+    email TEXT UNIQUE, 
+    password TEXT,                      -- Mot de passe haché (SHA-256)
+    avatar TEXT,
+    bio TEXT,
+    is_online INTEGER DEFAULT 0,
+    last_seen DATETIME,
+    is_activated INTEGER DEFAULT 0,     -- 0 = non activé, 1 = activé
+    activation_code TEXT,               -- Code à 6 chiffres envoyé par email
+    activation_code_expiry DATETIME     -- Date d'expiration du code (15 minutes)
+);
 
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,3 +208,4 @@ export const getGroupChat = (groupId: string) => {
         return [];
     }
 };
+
