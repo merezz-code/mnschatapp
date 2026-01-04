@@ -1,5 +1,3 @@
-// components/ChatList.tsx
-
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, TextInput, 
@@ -8,6 +6,7 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { db } from '../services/database';
 import { RoomType } from '../types';
+import socketService from '../services/socketService';
 
 const ChatList = ({ 
   me, 
@@ -23,6 +22,31 @@ const ChatList = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomType, setNewRoomType] = useState(RoomType.PUBLIC);
+
+  //  NOUVEAU: Écouter les nouveaux messages pour mettre à jour la liste
+  useEffect(() => {
+    // Écouter les messages privés
+    socketService.onPrivateMessage((message) => {
+      console.log('📩 Nouveau message privé reçu dans la liste:', message);
+      fetchData();
+    });
+
+    // Écouter les messages de groupe
+    socketService.onGroupMessage((message) => {
+      console.log('📩 Nouveau message de groupe reçu dans la liste:', message);
+      fetchData(); // Rafraîchir la liste
+    });
+
+    // Écouter les changements de statut en ligne
+    socketService.onUserStatusChange((data) => {
+      console.log('👤 Statut utilisateur changé:', data);
+      fetchData(); // Rafraîchir pour mettre à jour le statut en ligne
+    });
+
+    return () => {
+      // Pas besoin de nettoyer car socketService est un singleton
+    };
+  }, []);
 
   const fetchData = () => {
     try {
@@ -54,7 +78,7 @@ const ChatList = ({
 
       const privateChatsWithUser = lastTimestamps.map(conv => {
         const lastMessageRow = db.getFirstSync(`
-          SELECT content
+          SELECT content, sender_id
           FROM private_messages
           WHERE timestamp = ?
             AND (
@@ -68,13 +92,17 @@ const ChatList = ({
 
         if (!otherUser) return null;
 
+        //  AMÉLIORATION: Ajouter "Vous:" si c'est notre message
+        const isMyMessage = lastMessageRow?.sender_id === me.id;
+        const messagePrefix = isMyMessage ? 'Vous: ' : '';
+
         return {
           id: otherUser.id,
           username: otherUser.username,
           avatar: otherUser.avatar,
           is_online: otherUser.is_online,
           type: 'private',
-          lastMessage: lastMessageRow?.content || 'Démarrez la conversation',
+          lastMessage: lastMessageRow?.content ? `${messagePrefix}${lastMessageRow.content}` : 'Démarrez la conversation',
           lastTimestamp: conv.max_timestamp,
         };
       }).filter(Boolean);
@@ -141,6 +169,8 @@ const ChatList = ({
         onPress: () => {
           try {
             db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
+            //  NOUVEAU: Quitter le groupe Socket.io
+            socketService.leaveGroup(room.id);
             fetchData();
             Alert.alert('Quitter', `Vous avez quitté "${room.name}"`);
           } catch (error) {
@@ -166,6 +196,8 @@ const ChatList = ({
                 onPress: () => {
                   try {
                     db.runSync('DELETE FROM groups WHERE id = ?', [room.id]);
+                    //  NOUVEAU: Quitter le groupe Socket.io
+                    socketService.leaveGroup(room.id);
                     fetchData();
                     Alert.alert('Supprimé', `Le groupe "${room.name}" a été supprimé`);
                   } catch (error) {
@@ -182,28 +214,38 @@ const ChatList = ({
     Alert.alert(room.name, "Que voulez-vous faire ?", options);
   };
 
-  // === Création groupe (inchangée) ===
+  //  AMÉLIORATION: Création groupe avec Socket.io
   const handleCreateRoom = () => {
-    if (!newRoomName.trim()) return;
+    if (!newRoomName.trim()) {
+      Alert.alert('Erreur', 'Veuillez entrer un nom de groupe');
+      return;
+    }
 
     try {
+      const timestamp = Date.now();
+      
       db.runSync(
         'INSERT INTO groups (name, avatar, is_private, created_by, lastUpdate) VALUES (?, ?, ?, ?, ?)',
         [
-          newRoomName,
+          newRoomName.trim(),
           `https://picsum.photos/seed/${newRoomName}/200`,
           newRoomType === RoomType.PRIVATE ? 1 : 0,
           me.id,
-          Date.now()
+          timestamp
         ]
       );
 
       const lastId = db.getFirstSync('SELECT id FROM groups ORDER BY ROWID DESC LIMIT 1').id;
       db.runSync('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)', [lastId, me.id, 'admin']);
 
+      //  NOUVEAU: Rejoindre le groupe Socket.io automatiquement
+      socketService.joinGroup(lastId);
+      console.log(`✅ Groupe créé et rejoint: ${lastId}`);
+
       fetchData();
       setIsModalOpen(false);
       setNewRoomName('');
+      Alert.alert('Succès', 'Groupe créé avec succès!');
     } catch (error) {
       console.error('Erreur création groupe:', error);
       Alert.alert('Erreur', 'Impossible de créer le groupe.');
@@ -215,6 +257,11 @@ const ChatList = ({
       const alreadyMember = db.getFirstSync('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
       if (!alreadyMember) {
         db.runSync('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)', [room.id, me.id, 'member']);
+        
+        //  NOUVEAU: Rejoindre le groupe Socket.io
+        socketService.joinGroup(room.id);
+        console.log(`✅ Groupe rejoint: ${room.id}`);
+        
         Alert.alert('Succès', `Vous avez rejoint "${room.name}"`);
         fetchData();
       } else {
@@ -228,7 +275,7 @@ const ChatList = ({
   // Rendu conversation privée
   const renderPrivateItem = (chat) => {
     const time = chat.lastTimestamp 
-      ? new Date(chat.lastTimestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      ? new Date(chat.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '';
 
     return (
@@ -239,12 +286,20 @@ const ChatList = ({
         delayLongPress={600}
         style={[styles.item, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}
       >
-        <Image 
-          source={{ uri: chat.avatar || `https://i.pravatar.cc/150?u=${chat.id}` }} 
-          style={styles.avatar} 
-        />
+        <View style={styles.avatarContainer}>
+          <Image 
+            source={{ uri: chat.avatar || `https://i.pravatar.cc/150?u=${chat.id}` }} 
+            style={styles.avatar} 
+          />
+          {/*  NOUVEAU: Indicateur en ligne */}
+          {chat.is_online === 1 && (
+            <View style={styles.onlineIndicator} />
+          )}
+        </View>
         <View style={styles.info}>
-          <Text style={[styles.name, { color: isDarkMode ? '#fff' : '#1e293b' }]}>{chat.username}</Text>
+          <Text style={[styles.name, { color: isDarkMode ? '#fff' : '#1e293b' }]}>
+            {chat.username}
+          </Text>
           <Text style={styles.lastMsg} numberOfLines={1}>{chat.lastMessage}</Text>
         </View>
         {time ? <Text style={styles.time}>{time}</Text> : null}
@@ -285,7 +340,6 @@ const ChatList = ({
 
   return (
     <View style={[styles.container, { backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }]}>
-      {/* ... tout le reste du return (header, tabs, search, ScrollView, FAB, Modal) reste IDENTIQUE ... */}
       <View style={styles.header}>
         <Text style={[styles.title, { color: isDarkMode ? '#fff' : '#000' }]}>Messages</Text>
         <TouchableOpacity onPress={onToggleDarkMode} style={styles.themeBtn}>
@@ -314,7 +368,7 @@ const ChatList = ({
           placeholderTextColor="#94a3b8"
           value={search}
           onChangeText={setSearch}
-          style={[styles.searchInput, { color: '#000'  }]}
+          style={[styles.searchInput, { color: isDarkMode ? '#fff' : '#000'  }]}
         />
       </View>
 
@@ -324,7 +378,11 @@ const ChatList = ({
             ? filteredPrivate.map(renderPrivateItem)
             : <Text style={styles.empty}>Aucune conversation privée</Text>
         )}
-        {activeTab === 'GROUPS' && filteredGroups.map(room => renderGroupItem(room))}
+        {activeTab === 'GROUPS' && (
+          filteredGroups.length > 0
+            ? filteredGroups.map(room => renderGroupItem(room))
+            : <Text style={styles.empty}>Aucun groupe</Text>
+        )}
         {activeTab === 'DISCOVER' && (
           filteredDiscover.length > 0
             ? filteredDiscover.map(room => renderGroupItem(room, true))
@@ -333,14 +391,97 @@ const ChatList = ({
       </ScrollView>
 
       {activeTab !== 'DISCOVER' && (
-        <TouchableOpacity style={styles.fab} onPress={() => setIsModalOpen(true)}>
+        <TouchableOpacity 
+          style={styles.fab} 
+          onPress={() => {
+            console.log('🔵 Bouton FAB pressé, ouverture modal');
+            setIsModalOpen(true);
+          }}
+        >
           <Ionicons name="add" size={32} color="#fff" />
         </TouchableOpacity>
       )}
 
-      {/* Modal création groupe (inchangée) */}
-      <Modal visible={isModalOpen} transparent animationType="fade">
-        {/* ... ton modal existant ... */}
+      {/* Modal création groupe */}
+      <Modal 
+        visible={isModalOpen} 
+        transparent 
+        animationType="fade"
+        onRequestClose={() => setIsModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modal, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}>
+            <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#000' }]}>
+              Nouveau {activeTab === 'PRIVATE' ? 'Chat' : 'Groupe'}
+            </Text>
+            
+            <TextInput
+              placeholder="Nom du groupe"
+              placeholderTextColor="#94a3b8"
+              value={newRoomName}
+              onChangeText={setNewRoomName}
+              style={[
+                styles.input, 
+                { 
+                  backgroundColor: isDarkMode ? '#0f172a' : '#f1f5f9',
+                  color: isDarkMode ? '#fff' : '#000'
+                }
+              ]}
+            />
+
+            <View style={styles.typeRow}>
+              <TouchableOpacity 
+                onPress={() => setNewRoomType(RoomType.PUBLIC)}
+                style={[styles.typeBtn, newRoomType === RoomType.PUBLIC && styles.typeActive]}
+              >
+                <Ionicons 
+                  name="globe-outline" 
+                  size={32} 
+                  color={newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8'} 
+                />
+                <Text style={[
+                  styles.typeText,
+                  { color: newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8' }
+                ]}>
+                  Public
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                onPress={() => setNewRoomType(RoomType.PRIVATE)}
+                style={[styles.typeBtn, newRoomType === RoomType.PRIVATE && styles.typeActive]}
+              >
+                <Ionicons 
+                  name="lock-closed-outline" 
+                  size={32} 
+                  color={newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8'} 
+                />
+                <Text style={[
+                  styles.typeText,
+                  { color: newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8' }
+                ]}>
+                  Privé
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBtns}>
+              <TouchableOpacity 
+                onPress={() => {
+                  setIsModalOpen(false);
+                  setNewRoomName('');
+                }} 
+                style={styles.cancel}
+              >
+                <Text style={{ color: '#94a3b8', fontSize: 16 }}>Annuler</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={handleCreateRoom} style={styles.create}>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Créer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -361,6 +502,18 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 25, marginBottom: 10, elevation: 1 },
   avatarContainer: { position: 'relative' },
   avatar: { width: 60, height: 60, borderRadius: 30 },
+  //  NOUVEAU: Style pour l'indicateur en ligne
+  onlineIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#22c55e',
+    borderWidth: 3,
+    borderColor: '#fff'
+  },
   lock: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#2563eb', borderRadius: 10, padding: 4, borderWidth: 2, borderColor: '#fff' },
   info: { flex: 1, marginLeft: 15 },
   name: { fontSize: 16, fontWeight: 'bold' },
@@ -368,16 +521,16 @@ const styles = StyleSheet.create({
   time: { fontSize: 12, color: '#94a3b8', alignSelf: 'flex-start' },
   joinBtn: { backgroundColor: '#2563eb', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   joinText: { color: '#fff', fontWeight: 'bold' },
-  fab: { position: 'absolute', bottom: 30, right: 25, backgroundColor: '#2563eb', width: 65, height: 65, borderRadius: 35, justifyContent: 'center', alignItems: 'center', elevation: 8 },
+  fab: { position: 'absolute', bottom: 30, right: 25, backgroundColor: '#2563eb', width: 65, height: 65, borderRadius: 35, justifyContent: 'center', alignItems: 'center', elevation: 8, shadowColor: '#2563eb', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
   empty: { textAlign: 'center', color: '#94a3b8', fontStyle: 'italic', padding: 50 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   modal: { width: '90%', borderRadius: 30, padding: 25 },
   modalTitle: { fontSize: 22, fontWeight: '900', marginBottom: 20, textAlign: 'center' },
-  input: { borderRadius: 15, padding: 15, marginBottom: 20 },
+  input: { borderRadius: 15, padding: 15, marginBottom: 20, fontSize: 16 },
   typeRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 30 },
   typeBtn: { alignItems: 'center' },
   typeActive: { backgroundColor: 'rgba(37,99,235,0.1)', padding: 15, borderRadius: 20 },
-  typeText: { marginTop: 8, fontSize: 14 },
+  typeText: { marginTop: 8, fontSize: 14, fontWeight: '600' },
   modalBtns: { flexDirection: 'row', justifyContent: 'space-between' },
   cancel: { padding: 15 },
   create: { backgroundColor: '#2563eb', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 15 }
