@@ -259,7 +259,7 @@ export const getGroupChat = (groupId: string, userId: string) => {
     }
 };
 
-// ✅ NOUVELLE FONCTION : Marquer qu'un utilisateur a quitté un groupe
+// NOUVELLE FONCTION : Marquer qu'un utilisateur a quitté un groupe
 export const markUserLeftGroup = (userId: string, groupId: string) => {
     try {
         const leftAt = Date.now();
@@ -273,7 +273,7 @@ export const markUserLeftGroup = (userId: string, groupId: string) => {
     }
 };
 
-// ✅ NOUVELLE FONCTION : Supprimer l'historique de sortie (si l'utilisateur rejoint à nouveau)
+//  NOUVELLE FONCTION : Supprimer l'historique de sortie (si l'utilisateur rejoint à nouveau)
 export const clearUserLeftGroup = (userId: string, groupId: string) => {
     try {
         db.runSync(
