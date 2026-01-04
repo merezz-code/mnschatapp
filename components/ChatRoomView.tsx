@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, Modal, Alert, ScrollView } from 'react-native';
-import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { ArrowLeft, Send, Mic, Phone, Paperclip, ImageIcon, Settings, X, Check, UserPlus, LogOut, Trash2, UserMinus, StopCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { db } from '../services/database';
+import { getGroupChat, markUserLeftGroup } from '../services/database';
+import { setTyping } from '../services/typingIndicator';
+import { markGroupMessagesAsRead } from '../services/messageStatus';
+import TypingIndicator from './TypingIndicator';
 
 const ChatRoomView = ({ room, me, onBack }) => {
   const [inputText, setInputText] = useState('');
@@ -21,13 +25,16 @@ const ChatRoomView = ({ room, me, onBack }) => {
   const flatListRef = useRef(null);
   const recordingRef = useRef(null);
   const durationInterval = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   const isAdmin = admins.includes(me.id);
 
-  // Charger les messages et membres
   useEffect(() => {
     loadMessages();
     loadMembers();
+    
+    // Marquer tous les messages comme lus dès l'ouverture
+    markGroupMessagesAsRead(room.id, me.id);
 
     Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -38,21 +45,18 @@ const ChatRoomView = ({ room, me, onBack }) => {
       if (durationInterval.current) {
         clearInterval(durationInterval.current);
       }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      // Arrêter l'indicateur de frappe en quittant
+      setTyping(me.id, room.id, false);
     };
   }, [room.id]);
 
   const loadMessages = () => {
     try {
-      const msgs = db.getAllSync(
-        `SELECT 
-          id, group_id as roomId, sender_id as senderId, content, type,
-          file_name as fileName, file_url as fileUrl, 
-          image_url as imageUrl, audio_url as audioUrl, timestamp
-         FROM group_messages 
-         WHERE group_id = ? 
-         ORDER BY timestamp ASC`,
-        [room.id]
-      );
+      // Utiliser la fonction qui filtre selon si l'utilisateur a quitté
+      const msgs = getGroupChat(room.id, me.id);
       setMessages(msgs);
     } catch (error) {
       console.error('Erreur chargement messages:', error);
@@ -98,7 +102,12 @@ const ChatRoomView = ({ room, me, onBack }) => {
         ]
       );
 
+      // Mettre à jour lastUpdate du groupe
       db.runSync('UPDATE groups SET lastUpdate = ? WHERE id = ?', [timestamp, room.id]);
+
+      // Arrêter l'indicateur de frappe après envoi
+      setTyping(me.id, room.id, false);
+
       loadMessages();
 
       setTimeout(() => {
@@ -108,6 +117,26 @@ const ChatRoomView = ({ room, me, onBack }) => {
     } catch (error) {
       console.error('Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
+    }
+  };
+
+  const handleInputChange = (text) => {
+    setInputText(text);
+
+    // Gérer l'indicateur "en train d'écrire"
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    if (text.length > 0) {
+      setTyping(me.id, room.id, true);
+      
+      // Auto-stop après 3 secondes d'inactivité
+      typingTimeoutRef.current = setTimeout(() => {
+        setTyping(me.id, room.id, false);
+      }, 3000);
+    } else {
+      setTyping(me.id, room.id, false);
     }
   };
 
@@ -242,7 +271,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
   const handleLeaveRoom = () => {
     Alert.alert(
       "Quitter le groupe",
-      "Voulez-vous vraiment quitter ce groupe ?",
+      "Voulez-vous vraiment quitter ce groupe ? Vos messages seront effacés de votre appareil.",
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -250,6 +279,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
           style: "destructive",
           onPress: () => {
             try {
+              // Marquer la sortie AVANT de retirer de group_members
+              markUserLeftGroup(me.id, room.id);
+              
               db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
               Alert.alert('Succès', 'Vous avez quitté le groupe');
               onBack();
@@ -266,7 +298,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
   const handleDeleteRoom = () => {
     Alert.alert(
       "Supprimer le groupe",
-      "Cette action est irréversible. Tous les messages seront perdus.",
+      "Cette action est irréversible. Tous les messages seront perdus pour tous les membres.",
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -345,15 +377,13 @@ const ChatRoomView = ({ room, me, onBack }) => {
     return (
       <View style={[styles.msgWrapper, isMe ? styles.myMsgWrapper : styles.theirMsgWrapper]}>
         {!isMe && (
-          <Image source={{ uri: sender.avatar }} style={styles.senderAvatar} />
+          <Image
+            source={{ uri: sender.avatar }}
+            style={styles.senderAvatar}
+          />
         )}
 
-        <TouchableOpacity
-          style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
-          onLongPress={() => isMe && handleDeleteMessage(item.id)}
-          delayLongPress={500}
-          activeOpacity={0.9}
-        >
+        <View style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}>
           {!isMe && (
             <Text style={styles.senderName}>{sender.username}</Text>
           )}
@@ -364,7 +394,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
           {item.type === 'file' && (
             <View style={styles.fileContainer}>
-              <MaterialIcons name="attach-file" size={20} color={isMe ? "#fff" : "#2563eb"} />
+              <Paperclip size={20} color={isMe ? "#fff" : "#2563eb"} />
               <Text style={[styles.fileText, isMe ? styles.myText : styles.theirText]}>
                 {item.fileName || 'Fichier'}
               </Text>
@@ -373,7 +403,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
           {item.type === 'audio' && (
             <View style={styles.audioContainer}>
-              <Ionicons name="mic" size={20} color={isMe ? "#fff" : "#2563eb"} />
+              <Mic size={20} color={isMe ? "#fff" : "#2563eb"} />
               <Text style={[styles.audioText, isMe ? styles.myText : styles.theirText]}>
                 Message vocal
               </Text>
@@ -395,11 +425,11 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 style={styles.trashTouch}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <MaterialIcons name="delete-outline" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.trashIcon}>🗑️</Text>
               </TouchableOpacity>
             )}
           </View>
-        </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -408,7 +438,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
+          <ArrowLeft size={24} color="#0f172a" />
         </TouchableOpacity>
         <Image source={{ uri: room.avatar || 'https://picsum.photos/200' }} style={styles.avatar} />
         <View style={styles.headerInfo}>
@@ -416,12 +446,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
           <Text style={styles.status}>{members.length} membres</Text>
         </View>
         <TouchableOpacity onPress={handleCall} style={styles.headerAction}>
-          <MaterialIcons name="call" size={22} color="#2563eb" />
+          <Phone size={22} color="#2563eb" />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerAction}>
-          <MaterialIcons name="settings" size={22} color="#64748b" />
+          <Settings size={22} color="#64748b" />
         </TouchableOpacity>
       </View>
+
+      <TypingIndicator chatId={room.id} currentUserId={me.id} isGroup={true} />
 
       <FlatList
         ref={flatListRef}
@@ -444,24 +476,24 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <Text style={styles.recordingText}>Enregistrement... {formatDuration(recordingDuration)}</Text>
               </View>
               <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
-                <MaterialIcons name="stop-circle" size={32} color="#ef4444" />
+                <StopCircle size={28} color="#ef4444" />
               </TouchableOpacity>
             </View>
           ) : (
             <>
               <View style={styles.inputContainer}>
                 <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
-                  <MaterialIcons name="attach-file" size={20} color="#94a3b8" />
+                  <Paperclip size={20} color="#94a3b8" />
                 </TouchableOpacity>
                 <TextInput
                   style={styles.input}
                   placeholder="Message..."
                   value={inputText}
-                  onChangeText={setInputText}
+                  onChangeText={handleInputChange}
                   multiline
                 />
                 <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
-                  <MaterialIcons name="image" size={20} color="#94a3b8" />
+                  <ImageIcon size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
               <TouchableOpacity
@@ -476,9 +508,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 }}
               >
                 {inputText.trim() ? (
-                  <MaterialIcons name="send" size={24} color="#fff" />
+                  <Send size={24} color="#fff" />
                 ) : (
-                  <MaterialIcons name="mic" size={24} color="#fff" />
+                  <Mic size={24} color="#fff" />
                 )}
               </TouchableOpacity>
             </>
@@ -486,14 +518,13 @@ const ChatRoomView = ({ room, me, onBack }) => {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Modal Settings */}
       <Modal visible={showSettings} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Gestion du Groupe</Text>
               <TouchableOpacity onPress={() => setShowSettings(false)}>
-                <MaterialIcons name="close" size={24} color="#000" />
+                <X size={24} color="#000" />
               </TouchableOpacity>
             </View>
 
@@ -507,7 +538,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                     onChangeText={setEditedName}
                   />
                   <TouchableOpacity style={styles.saveBtn} onPress={handleSaveSettings}>
-                    <MaterialIcons name="check" size={20} color="#fff" />
+                    <Check size={20} color="#fff" />
                     <Text style={styles.saveBtnText}>Sauvegarder</Text>
                   </TouchableOpacity>
                 </View>
@@ -517,7 +548,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                 <Text style={styles.sectionTitle}>Membres ({members.length})</Text>
                 {isAdmin && (
                   <TouchableOpacity onPress={() => setShowAddMember(true)} style={styles.addMemberBtn}>
-                    <MaterialIcons name="person-add" size={20} color="#2563eb" />
+                    <UserPlus size={20} color="#2563eb" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -540,7 +571,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                         onPress={() => handleRemoveMember(memberId)}
                         style={styles.removeMemberBtn}
                       >
-                        <MaterialIcons name="person-remove" size={20} color="#ef4444" />
+                        <UserMinus size={20} color="#ef4444" />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -550,14 +581,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
               <View style={styles.actionsContainer}>
                 {!isAdmin && (
                   <TouchableOpacity style={styles.leaveBtn} onPress={handleLeaveRoom}>
-                    <MaterialIcons name="logout" size={20} color="#ef4444" />
+                    <LogOut size={20} color="#ef4444" />
                     <Text style={styles.leaveBtnText}>Quitter le groupe</Text>
                   </TouchableOpacity>
                 )}
 
                 {isAdmin && (
                   <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteRoom}>
-                    <MaterialIcons name="delete" size={20} color="#fff" />
+                    <Trash2 size={20} color="#fff" />
                     <Text style={styles.deleteBtnText}>Supprimer le groupe</Text>
                   </TouchableOpacity>
                 )}
@@ -566,14 +597,13 @@ const ChatRoomView = ({ room, me, onBack }) => {
           </View>
         </View>
 
-        {/* Modal Add Member */}
         <Modal visible={showAddMember} animationType="fade" transparent={true}>
           <View style={styles.innerModalOverlay}>
             <View style={styles.innerModalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Ajouter un membre</Text>
                 <TouchableOpacity onPress={() => setShowAddMember(false)}>
-                  <MaterialIcons name="close" size={24} color="#000" />
+                  <X size={24} color="#000" />
                 </TouchableOpacity>
               </View>
               <ScrollView style={{ maxHeight: 400 }}>
@@ -585,7 +615,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                   >
                     <Image source={{ uri: u.avatar }} style={styles.memberAvatar} />
                     <Text style={styles.memberName}>{u.username}</Text>
-                    <MaterialIcons name="person-add" size={20} color="#2563eb" />
+                    <UserPlus size={20} color="#2563eb" />
                   </TouchableOpacity>
                 ))}
                 {getAvailableUsers().length === 0 && (
@@ -683,6 +713,20 @@ const styles = StyleSheet.create({
   msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
   myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
   theirTime: { color: '#94a3b8' },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  trashTouch: {
+    marginLeft: 12,
+    padding: 4,
+  },
+  trashIcon: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.8)',
+  },
   inputSection: {
     flexDirection: 'row',
     padding: 12,
@@ -811,30 +855,66 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  saveBtn: { backgroundColor: '#2563eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 15, gap: 10, marginTop: 10 },
+  saveBtn: { 
+    backgroundColor: '#2563eb', 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 12, 
+    borderRadius: 15, 
+    gap: 10, 
+    marginTop: 10 
+  },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
-  memberItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 10, backgroundColor: '#f8fafc', borderRadius: 15 },
+  memberItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    marginBottom: 15, 
+    padding: 10, 
+    backgroundColor: '#f8fafc', 
+    borderRadius: 15 
+  },
   memberAvatar: { width: 40, height: 40, borderRadius: 10 },
   memberInfo: { flex: 1, marginLeft: 12 },
   memberName: { fontSize: 14, fontWeight: 'bold' },
   memberRole: { fontSize: 11, color: '#94a3b8' },
   removeMemberBtn: { padding: 10 },
-  memberSelect: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  memberSelect: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 15, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#f1f5f9' 
+  },
+  emptyText: { 
+    textAlign: 'center', 
+    color: '#94a3b8', 
+    fontSize: 14, 
+    padding: 20 
+  },
   actionsContainer: { marginTop: 30, gap: 15 },
-  leaveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, borderColor: '#ef4444', backgroundColor: '#fff', borderWidth: 1 },
+  leaveBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 18, 
+    borderRadius: 20, 
+    gap: 10, 
+    borderColor: '#ef4444', 
+    backgroundColor: '#fff', 
+    borderWidth: 1 
+  },
   leaveBtnText: { color: '#ef4444', fontWeight: 'bold' },
-  deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, backgroundColor: '#ef4444' },
+  deleteBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 18, 
+    borderRadius: 20, 
+    gap: 10, 
+    backgroundColor: '#ef4444' 
+  },
   deleteBtnText: { color: '#fff', fontWeight: 'bold' },
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  trashTouch: {
-    marginLeft: 12,
-    padding: 4,
-  },
-  emptyText: { textAlign: 'center', color: '#94a3b8', padding: 20 },
 });
+
 export default ChatRoomView;

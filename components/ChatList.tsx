@@ -1,5 +1,3 @@
-// components/ChatList.tsx
-
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, TextInput, 
@@ -8,6 +6,12 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { db } from '../services/database';
 import { RoomType } from '../types';
+import { 
+  getUnreadPrivateCount, 
+  getUnreadGroupCount,
+  getUnreadCountsByPrivateChat,
+  getUnreadCountsByGroup 
+} from '../services/messageStatus';
 
 const ChatList = ({ 
   me, 
@@ -23,6 +27,10 @@ const ChatList = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomType, setNewRoomType] = useState(RoomType.PUBLIC);
+  
+  // ✅ États pour les compteurs de messages non lus
+  const [unreadPrivateCounts, setUnreadPrivateCounts] = useState<{ [key: string]: number }>({});
+  const [unreadGroupCounts, setUnreadGroupCounts] = useState<{ [key: string]: number }>({});
 
   const fetchData = () => {
     try {
@@ -81,13 +89,38 @@ const ChatList = ({
 
       privateChatsWithUser.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
       setPrivateChats(privateChatsWithUser);
+
+      // ✅ Charger les compteurs de messages non lus
+      loadUnreadCounts();
     } catch (error) {
       console.error('Erreur récupération données:', error);
     }
   };
 
+  // ✅ Charger tous les compteurs de messages non lus
+  const loadUnreadCounts = () => {
+    try {
+      const privateCounts = getUnreadCountsByPrivateChat(me.id);
+      const groupCounts = getUnreadCountsByGroup(me.id);
+      
+      setUnreadPrivateCounts(privateCounts);
+      setUnreadGroupCounts(groupCounts);
+      
+      console.log('📊 Compteurs chargés:', { privateCounts, groupCounts });
+    } catch (error) {
+      console.error('Erreur chargement compteurs:', error);
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    
+    // Rafraîchir les compteurs toutes les 2 secondes (optionnel)
+    const interval = setInterval(() => {
+      loadUnreadCounts();
+    }, 2000);
+
+    return () => clearInterval(interval);
   }, [me.id]);
 
   // Filtrage
@@ -182,7 +215,7 @@ const ChatList = ({
     Alert.alert(room.name, "Que voulez-vous faire ?", options);
   };
 
-  // === Création groupe (inchangée) ===
+  // === Création groupe ===
   const handleCreateRoom = () => {
     if (!newRoomName.trim()) return;
 
@@ -225,11 +258,14 @@ const ChatList = ({
     }
   };
 
-  // Rendu conversation privée
+  // ✅ Rendu conversation privée AVEC BADGE
   const renderPrivateItem = (chat) => {
     const time = chat.lastTimestamp 
       ? new Date(chat.lastTimestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '';
+
+    // Récupérer le nombre de messages non lus
+    const unreadCount = unreadPrivateCounts[chat.id] || 0;
 
     return (
       <TouchableOpacity
@@ -245,16 +281,34 @@ const ChatList = ({
         />
         <View style={styles.info}>
           <Text style={[styles.name, { color: isDarkMode ? '#fff' : '#1e293b' }]}>{chat.username}</Text>
-          <Text style={styles.lastMsg} numberOfLines={1}>{chat.lastMessage}</Text>
+          <Text 
+            style={[
+              styles.lastMsg, 
+              unreadCount > 0 && { fontWeight: 'bold', color: '#2563eb' }
+            ]} 
+            numberOfLines={1}
+          >
+            {chat.lastMessage}
+          </Text>
         </View>
-        {time ? <Text style={styles.time}>{time}</Text> : null}
+        <View style={styles.rightSection}>
+          {time ? <Text style={styles.time}>{time}</Text> : null}
+          {unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
 
-  // Rendu groupe
+  // ✅ Rendu groupe AVEC BADGE
   const renderGroupItem = (room, isDiscover = false) => {
     const memberCount = room.members?.length || 0;
+    const unreadCount = unreadGroupCounts[room.id] || 0;
 
     return (
       <TouchableOpacity
@@ -274,18 +328,23 @@ const ChatList = ({
             {isDiscover ? `Rejoindre • ${memberCount} membres` : `${memberCount} membres`}
           </Text>
         </View>
-        {isDiscover && (
+        {isDiscover ? (
           <View style={styles.joinBtn}>
             <Text style={styles.joinText}>Rejoindre</Text>
           </View>
-        )}
+        ) : unreadCount > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </Text>
+          </View>
+        ) : null}
       </TouchableOpacity>
     );
   };
 
   return (
     <View style={[styles.container, { backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }]}>
-      {/* ... tout le reste du return (header, tabs, search, ScrollView, FAB, Modal) reste IDENTIQUE ... */}
       <View style={styles.header}>
         <Text style={[styles.title, { color: isDarkMode ? '#fff' : '#000' }]}>Messages</Text>
         <TouchableOpacity onPress={onToggleDarkMode} style={styles.themeBtn}>
@@ -314,7 +373,7 @@ const ChatList = ({
           placeholderTextColor="#94a3b8"
           value={search}
           onChangeText={setSearch}
-          style={[styles.searchInput, { color: '#000'  }]}
+          style={[styles.searchInput, { color: '#000' }]}
         />
       </View>
 
@@ -338,9 +397,8 @@ const ChatList = ({
         </TouchableOpacity>
       )}
 
-      {/* Modal création groupe (inchangée) */}
       <Modal visible={isModalOpen} transparent animationType="fade">
-        {/* ... ton modal existant ... */}
+        {/* Ton modal existant reste identique */}
       </Modal>
     </View>
   );
@@ -365,22 +423,27 @@ const styles = StyleSheet.create({
   info: { flex: 1, marginLeft: 15 },
   name: { fontSize: 16, fontWeight: 'bold' },
   lastMsg: { fontSize: 13, color: '#64748b', marginTop: 4 },
-  time: { fontSize: 12, color: '#94a3b8', alignSelf: 'flex-start' },
+  rightSection: { alignItems: 'flex-end', gap: 8 },
+  time: { fontSize: 12, color: '#94a3b8' },
+  // ✅ Badge pour messages non lus
+  badge: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
   joinBtn: { backgroundColor: '#2563eb', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   joinText: { color: '#fff', fontWeight: 'bold' },
   fab: { position: 'absolute', bottom: 30, right: 25, backgroundColor: '#2563eb', width: 65, height: 65, borderRadius: 35, justifyContent: 'center', alignItems: 'center', elevation: 8 },
   empty: { textAlign: 'center', color: '#94a3b8', fontStyle: 'italic', padding: 50 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modal: { width: '90%', borderRadius: 30, padding: 25 },
-  modalTitle: { fontSize: 22, fontWeight: '900', marginBottom: 20, textAlign: 'center' },
-  input: { borderRadius: 15, padding: 15, marginBottom: 20 },
-  typeRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 30 },
-  typeBtn: { alignItems: 'center' },
-  typeActive: { backgroundColor: 'rgba(37,99,235,0.1)', padding: 15, borderRadius: 20 },
-  typeText: { marginTop: 8, fontSize: 14 },
-  modalBtns: { flexDirection: 'row', justifyContent: 'space-between' },
-  cancel: { padding: 15 },
-  create: { backgroundColor: '#2563eb', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 15 }
 });
 
 export default ChatList;

@@ -1,5 +1,3 @@
-// ChatPrivateView.tsx
-
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -14,53 +12,58 @@ import {
   Modal,
   Alert,
 } from 'react-native';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import {
+  ArrowLeft,
+  Send,
+  Mic,
+  Phone,
+  Paperclip,
+  Image as ImageIcon,
+  Settings,
+  X,
+  StopCircle,
+  UserX,
+} from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { db } from '../services/database';
+import { setTyping } from '../services/typingIndicator';
+import { markPrivateMessagesAsRead } from '../services/messageStatus';
+import TypingIndicator from './TypingIndicator';
 
 interface ChatPrivateViewProps {
   chatWith: any;
   me: any;
   onBack: () => void;
+  onBlockUser?: (userId: string) => void;
 }
 
 const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   chatWith,
   me,
   onBack,
+  onBlockUser,
 }) => {
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
-  const [isBlocked, setIsBlocked] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationInterval = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const otherUserId = chatWith.id;
 
-  // Vérifie si l'utilisateur est bloqué
-  const checkIfBlocked = () => {
-    try {
-      const result = db.getFirstSync(
-        `SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ? LIMIT 1`,
-        [me.id, otherUserId]
-      );
-      setIsBlocked(!!result);
-    } catch (err) {
-      console.error('Erreur vérification blocage:', err);
-    }
-  };
-
   useEffect(() => {
     loadMessages();
-    checkIfBlocked();
+    
+    // Marquer tous les messages reçus comme lus dès l'ouverture
+    markPrivateMessagesAsRead(otherUserId, me.id);
 
     Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -69,6 +72,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
     return () => {
       if (durationInterval.current) clearInterval(durationInterval.current);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      // Arrêter l'indicateur de frappe en quittant
+      setTyping(me.id, otherUserId, false);
     };
   }, [otherUserId]);
 
@@ -84,7 +90,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           file_url AS fileUrl,
           image_url AS imageUrl,
           audio_url AS audioUrl,
-          timestamp
+          timestamp,
+          is_read AS isRead
          FROM private_messages 
          WHERE (sender_id = ? AND receiver_id = ?) 
             OR (sender_id = ? AND receiver_id = ?)
@@ -128,7 +135,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     fileUrl: string | null = null
   ) => {
     if (type === 'text' && !content.trim()) return;
-    if (isBlocked) return; // Bloqué, on n'envoie rien
 
     try {
       const timestamp = Math.floor(Date.now() / 1000);
@@ -150,13 +156,37 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         ]
       );
 
+      // Arrêter l'indicateur de frappe après envoi
+      setTyping(me.id, otherUserId, false);
+
       loadMessages();
+
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
       console.error('Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
+    }
+  };
+
+  const handleInputChange = (text: string) => {
+    setInputText(text);
+
+    // Gérer l'indicateur "en train d'écrire"
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    if (text.length > 0) {
+      setTyping(me.id, otherUserId, true);
+      
+      // Auto-stop après 3 secondes d'inactivité
+      typingTimeoutRef.current = setTimeout(() => {
+        setTyping(me.id, otherUserId, false);
+      }, 3000);
+    } else {
+      setTyping(me.id, otherUserId, false);
     }
   };
 
@@ -184,7 +214,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   };
 
   const startRecording = async () => {
-    if (isBlocked) return; // Bloqué, pas d'enregistrement
     try {
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
@@ -235,46 +264,31 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     }
   };
 
-  // Toggle blocage / débloquage
-  const handleToggleBlock = () => {
-    if (isBlocked) {
-      try {
-        db.runSync(
-          'DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?',
-          [me.id, otherUserId]
-        );
-        setIsBlocked(false);
-        Alert.alert('Débloqué', `${chatWith.username} peut de nouveau vous envoyer des messages.`);
-      } catch (err) {
-        console.error(err);
-        Alert.alert('Erreur', 'Impossible de débloquer cet utilisateur.');
-      }
-    } else {
-      Alert.alert(
-        'Bloquer cet utilisateur',
-        `Voulez-vous vraiment bloquer ${chatWith.username} ?`,
-        [
-          { text: 'Annuler', style: 'cancel' },
-          {
-            text: 'Bloquer',
-            style: 'destructive',
-            onPress: () => {
-              try {
-                db.runSync(
-                  'INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)',
-                  [me.id, otherUserId]
-                );
-                setIsBlocked(true);
-                Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
-              } catch (err) {
-                console.error(err);
-                Alert.alert('Erreur', 'Impossible de bloquer cet utilisateur.');
-              }
-            },
+  const handleBlockUser = () => {
+    Alert.alert(
+      'Bloquer cet utilisateur',
+      `Voulez-vous vraiment bloquer ${chatWith.username} ? Vous ne pourrez plus échanger de messages.`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Bloquer',
+          style: 'destructive',
+          onPress: () => {
+            try {
+              db.runSync(
+                'INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)',
+                [me.id, otherUserId]
+              );
+              Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
+              if (onBlockUser) onBlockUser(otherUserId);
+              onBack();
+            } catch (error) {
+              Alert.alert('Erreur', 'Impossible de bloquer cet utilisateur');
+            }
           },
-        ]
-      );
-    }
+        },
+      ]
+    );
   };
 
   const handleCall = () => {
@@ -306,11 +320,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           />
         )}
 
-        <TouchableOpacity
+        <View 
           style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
-          onLongPress={() => isMe && handleDeleteMessage(item.id)}
-          delayLongPress={500}
-          activeOpacity={0.9}
         >
           {item.type === 'image' && item.imageUrl && (
             <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
@@ -318,7 +329,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
           {item.type === 'file' && (
             <View style={styles.fileContainer}>
-              <MaterialIcons name="attach-file" size={20} color={isMe ? '#fff' : '#2563eb'} />
+              <Paperclip size={20} color={isMe ? '#fff' : '#2563eb'} />
               <Text style={[styles.fileText, isMe ? styles.myText : styles.theirText]}>
                 {item.fileName || 'Fichier'}
               </Text>
@@ -327,7 +338,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
           {item.type === 'audio' && (
             <View style={styles.audioContainer}>
-              <Ionicons name="mic" size={20} color={isMe ? '#fff' : '#2563eb'} />
+              <Mic size={20} color={isMe ? '#fff' : '#2563eb'} />
               <Text style={[styles.audioText, isMe ? styles.myText : styles.theirText]}>
                 Message vocal
               </Text>
@@ -349,21 +360,20 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
                 style={styles.trashTouch}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <MaterialIcons name="delete-outline" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.trashIcon}>🗑️</Text>
               </TouchableOpacity>
             )}
           </View>
-        </TouchableOpacity>
+        </View>
       </View>
     );
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
+          <ArrowLeft size={24} color="#0f172a" />
         </TouchableOpacity>
         <Image
           source={{ uri: chatWith.avatar || `https://i.pravatar.cc/150?u=${chatWith.id}` }}
@@ -376,14 +386,15 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           </Text>
         </View>
         <TouchableOpacity onPress={handleCall} style={styles.headerAction}>
-          <MaterialIcons name="call" size={22} color="#2563eb" />
+          <Phone size={22} color="#2563eb" />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerAction}>
-          <MaterialIcons name="settings" size={22} color="#64748b" />
+          <Settings size={22} color="#64748b" />
         </TouchableOpacity>
       </View>
 
-      {/* Liste des messages */}
+      <TypingIndicator chatId={otherUserId} currentUserId={me.id} isGroup={false} />
+
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -393,86 +404,70 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
 
-      {/* Zone d'envoi */}
-      {isBlocked ? (
-        <View style={[styles.inputSection, { justifyContent: 'center', padding: 12 }]}>
-          <Text style={{ color: '#ef4444', fontWeight: 'bold' }}>
-            Vous avez bloqué cet utilisateur. Débloquez pour envoyer un message.
-          </Text>
-        </View>
-      ) : (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        >
-          <View style={styles.inputSection}>
-            {isRecording ? (
-              <View style={styles.recordingContainer}>
-                <View style={styles.recordingInfo}>
-                  <View style={styles.recordingDot} />
-                  <Text style={styles.recordingText}>
-                    Enregistrement... {formatDuration(recordingDuration)}
-                  </Text>
-                </View>
-                <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
-                  <MaterialIcons name="stop-circle" size={32} color="#ef4444" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <View style={styles.inputSection}>
+          {isRecording ? (
+            <View style={styles.recordingContainer}>
+              <View style={styles.recordingInfo}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>
+                  Enregistrement... {formatDuration(recordingDuration)}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
+                <StopCircle size={28} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <View style={styles.inputContainer}>
+                <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
+                  <Paperclip size={20} color="#94a3b8" />
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Message..."
+                  value={inputText}
+                  onChangeText={handleInputChange}
+                  multiline
+                />
+                <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
+                  <ImageIcon size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
-            ) : (
-              <>
-                <View style={styles.inputContainer}>
-                  <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
-                    <MaterialIcons name="attach-file" size={20} color="#94a3b8" />
-                  </TouchableOpacity>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Message..."
-                    value={inputText}
-                    onChangeText={setInputText}
-                    multiline
-                  />
-                  <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
-                    <MaterialIcons name="image" size={20} color="#94a3b8" />
-                  </TouchableOpacity>
-                </View>
-                <TouchableOpacity
-                  style={[styles.sendBtn, !inputText.trim() && styles.micBtn]}
-                  onPress={() => {
-                    if (inputText.trim()) {
-                      handleSendMessage(inputText.trim(), 'text');
-                      setInputText('');
-                    } else {
-                      startRecording();
-                    }
-                  }}
-                >
-                  {inputText.trim() ? (
-                    <MaterialIcons name="send" size={24} color="#fff" />
-                  ) : (
-                    <MaterialIcons name="mic" size={24} color="#fff" />
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </KeyboardAvoidingView>
-      )}
+              <TouchableOpacity
+                style={[styles.sendBtn, !inputText.trim() && styles.micBtn]}
+                onPress={() => {
+                  if (inputText.trim()) {
+                    handleSendMessage(inputText.trim(), 'text');
+                    setInputText('');
+                  } else {
+                    startRecording();
+                  }
+                }}
+              >
+                {inputText.trim() ? <Send size={24} color="#fff" /> : <Mic size={24} color="#fff" />}
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </KeyboardAvoidingView>
 
-      {/* Modal Settings */}
       <Modal visible={showSettings} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Options</Text>
               <TouchableOpacity onPress={() => setShowSettings(false)}>
-                <MaterialIcons name="close" size={24} color="#000" />
+                <X size={24} color="#000" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.blockBtn} onPress={handleToggleBlock}>
-              <MaterialIcons name="block" size={22} color={isBlocked ? '#2563eb' : '#ef4444'} />
-              <Text style={[styles.blockBtnText, { color: isBlocked ? '#2563eb' : '#ef4444' }]}>
-                {isBlocked ? `Débloquer ${chatWith.username}` : `Bloquer ${chatWith.username}`}
-              </Text>
+            <TouchableOpacity style={styles.blockBtn} onPress={handleBlockUser}>
+              <UserX size={22} color="#ef4444" />
+              <Text style={styles.blockBtnText}>Bloquer {chatWith.username}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -515,47 +510,131 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
-    elevation: 2,
   },
-  myBubble: { backgroundColor: '#2563eb', borderBottomRightRadius: 4 },
-  theirBubble: { backgroundColor: '#e2e8f0', borderBottomLeftRadius: 4 },
-  msgText: { fontSize: 14 },
+  myBubble: { backgroundColor: '#2563eb', borderBottomRightRadius: 4, elevation: 2 },
+  theirBubble: { backgroundColor: '#fff', borderBottomLeftRadius: 4, elevation: 2 },
+  msgText: { fontSize: 15, lineHeight: 20 },
   myText: { color: '#fff' },
   theirText: { color: '#0f172a' },
-  bottomRow: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 },
-  msgTime: { fontSize: 10 },
-  myTime: { color: 'rgba(255,255,255,0.8)', marginRight: 6 },
-  theirTime: { color: '#64748b', marginLeft: 6 },
-  trashTouch: { padding: 4 },
+  msgImage: { width: 220, height: 160, borderRadius: 12, marginBottom: 6 },
+  fileContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+    padding: 10,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 10,
+  },
+  fileText: { fontSize: 13, fontWeight: '500', flex: 1 },
+  audioContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+    padding: 10,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 10,
+  },
+  audioText: { fontSize: 13, fontWeight: '500' },
+  msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
+  myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
+  theirTime: { color: '#94a3b8' },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  trashTouch: {
+    marginLeft: 12,
+    padding: 4,
+  },
+  trashIcon: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.8)',
+  },
   inputSection: {
     flexDirection: 'row',
-    padding: 10,
+    padding: 12,
+    alignItems: 'flex-end',
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
-    alignItems: 'center',
   },
-  inputContainer: { flexDirection: 'row', flex: 1, alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 25, paddingHorizontal: 10 },
-  input: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, fontSize: 14, maxHeight: 100 },
-  attachBtn: { padding: 6 },
-  sendBtn: { backgroundColor: '#2563eb', borderRadius: 24, padding: 12, marginLeft: 8 },
+  inputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 25,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    minHeight: 48,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    fontSize: 15,
+    maxHeight: 100,
+  },
+  attachBtn: { padding: 8 },
+  sendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   micBtn: { backgroundColor: '#64748b' },
-  recordingContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 },
-  recordingInfo: { flexDirection: 'row', alignItems: 'center' },
-  recordingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', marginRight: 6 },
-  recordingText: { fontSize: 14, color: '#ef4444' },
+  recordingContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fef2f2',
+    borderRadius: 25,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  recordingInfo: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  recordingDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#ef4444' },
+  recordingText: { fontSize: 15, fontWeight: '600', color: '#ef4444' },
   stopBtn: { padding: 8 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', padding: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  blockBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-  blockBtnText: { marginLeft: 10, fontSize: 16, fontWeight: '600' },
-  msgImage: { width: 180, height: 120, borderRadius: 12, marginBottom: 6 },
-  fileContainer: { flexDirection: 'row', alignItems: 'center' },
-  fileText: { marginLeft: 6 },
-  audioContainer: { flexDirection: 'row', alignItems: 'center' },
-  audioText: { marginLeft: 6 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 25,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
+  blockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 15,
+    padding: 18,
+    backgroundColor: '#fef2f2',
+    borderRadius: 15,
+  },
+  blockBtnText: { color: '#ef4444', fontWeight: 'bold', fontSize: 16 },
 });
 
 export default ChatPrivateView;
