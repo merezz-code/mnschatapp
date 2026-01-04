@@ -38,7 +38,7 @@ const ProfileView = ({ userId, isDarkMode=false, onLogout }) => {
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1 });
-    if (!result.cancelled) setAvatar(result.uri);
+    if (!result.canceled) setAvatar(result.assets[0].uri);
   };
 
   const handleLogout = () => {

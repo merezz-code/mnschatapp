@@ -58,18 +58,19 @@ export const initDatabase = () => {
         );
 
       CREATE TABLE IF NOT EXISTS private_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,      -- Changé en INTEGER AUTOINCREMENT pour simplicité
-  sender_id TEXT NOT NULL,
-  receiver_id TEXT NOT NULL,
-  content TEXT,
-  type TEXT DEFAULT 'text',                  -- AJOUTÉ : text | image | file | audio
-  file_name TEXT,                            -- AJOUTÉ
-  file_url TEXT,
-  image_url TEXT,
-  audio_url TEXT,                            -- AJOUTÉ
-  timestamp INTEGER DEFAULT (strftime('%s', 'now')),  -- Timestamp Unix en secondes
-  is_read INTEGER DEFAULT 0
-);
+        id INTEGER PRIMARY KEY AUTOINCREMENT,      -- Changé en INTEGER AUTOINCREMENT pour simplicité
+        sender_id TEXT NOT NULL,
+        receiver_id TEXT NOT NULL,
+        content TEXT,
+        type TEXT DEFAULT 'text',                  -- AJOUTÉ : text | image | file | audio
+        file_name TEXT,                            -- AJOUTÉ
+        file_url TEXT,
+        image_url TEXT,
+        audio_url TEXT,                            -- AJOUTÉ
+        timestamp INTEGER DEFAULT (strftime('%s', 'now')),  -- Timestamp Unix en secondes
+        is_read INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0
+    );
 
 -- Index pour accélérer les requêtes par conversation
 CREATE INDEX IF NOT EXISTS idx_private_messages_conversation 
@@ -95,6 +96,12 @@ ON private_messages (
         FOREIGN KEY (blocker_id) REFERENCES users (id),
         FOREIGN KEY (blocked_id) REFERENCES users (id)
       );
+
+      CREATE TABLE IF NOT EXISTS deleted_messages (
+        user_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        PRIMARY KEY (user_id, message_id)
+        );
     `);
         console.log("✅ Base de données SQLite initialisée.");
     } catch (error) {

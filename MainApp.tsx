@@ -1,4 +1,3 @@
-// MainApp.tsx (version corrigée complète)
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -15,15 +14,16 @@ import ChatList from './components/ChatList';
 import ContactList from './components/ContactList';
 import ProfileView from './components/ProfileView';
 import ChatRoomView from './components/ChatRoomView';
-import ChatPrivateView from './components/ChatPrivateView'; // ← Ajouté
+import ChatPrivateView from './components/ChatPrivateView';
+import socketService from './services/socketService';
 import * as SQLite from 'expo-sqlite';
 
 const db = SQLite.openDatabaseSync('chatapp.db');
 
-export default function MainApp({ me, onLogout }) {
+export default function MainApp({ me, onLogout }: any) {
   const [currentTab, setCurrentTab] = useState('CHATS');
-  const [activeRoom, setActiveRoom] = useState<any>(null);           // Pour les groupes
-  const [activePrivateChat, setActivePrivateChat] = useState<any>(null); // ← NOUVEAU : Pour les chats privés
+  const [activeRoom, setActiveRoom] = useState<any>(null);
+  const [activePrivateChat, setActivePrivateChat] = useState<any>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [rooms, setRooms] = useState<any[]>([]);
 
@@ -37,8 +37,25 @@ export default function MainApp({ me, onLogout }) {
   }, []);
 
   useEffect(() => {
-    fetchRooms();
-  }, [fetchRooms]);
+    if (me && me.id) {
+      console.log('Connexion Socket.io pour l\'utilisateur:', me.id);
+      
+      // Connecter Socket.io
+      socketService.connect(me.id);
+      socketService.setUserOnline(me.id);
+
+      fetchRooms();
+    }
+
+    // ✅ Nettoyage à la déconnexion
+    return () => {
+      if (me && me.id) {
+        console.log('Déconnexion Socket.io pour l\'utilisateur:', me.id);
+        socketService.setUserOffline(me.id);
+        socketService.disconnect();
+      }
+    };
+  }, [me, fetchRooms]);
 
   const handleCreateRoom = (newRoom: any) => {
     try {
@@ -59,7 +76,7 @@ export default function MainApp({ me, onLogout }) {
       );
       fetchRooms();
     } catch (e) {
-      console.error(e);
+      console.error('Erreur création salon:', e);
     }
   };
 
@@ -86,14 +103,13 @@ export default function MainApp({ me, onLogout }) {
       );
     }
 
-    // ← NOUVEAU : Chat privé ouvert
     if (activePrivateChat) {
       return (
         <ChatPrivateView
           chatWith={activePrivateChat}
           me={me}
           onBack={() => setActivePrivateChat(null)}
-          onBlockUser={() => setActivePrivateChat(null)} // Retour à la liste après blocage
+          onBlockUser={() => setActivePrivateChat(null)}
         />
       );
     }
@@ -101,20 +117,20 @@ export default function MainApp({ me, onLogout }) {
     // Onglets normaux
     switch (currentTab) {
       case 'CHATS':
-  return (
-    <ChatList
-      me={me}
-      onNavigate={setActiveRoom}           // ← groupes → ChatRoomView
-      onOpenPrivateChat={setActivePrivateChat} // ← privés → ChatPrivateView
-      isDarkMode={isDarkMode}
-      onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-    />
-  );
+        return (
+          <ChatList
+            me={me}
+            onNavigate={setActiveRoom}
+            onOpenPrivateChat={setActivePrivateChat}
+            isDarkMode={isDarkMode}
+            onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+          />
+        );
       case 'CONTACTS':
         return (
           <ContactList
             me={me}
-            onStartChat={(user) => setActivePrivateChat(user)} // ← Ouvre un privé → ChatPrivateView
+            onStartChat={(user) => setActivePrivateChat(user)}
           />
         );
       case 'PROFILE':
