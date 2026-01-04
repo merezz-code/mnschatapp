@@ -6,28 +6,69 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { db } from '../services/database';
+import socketService from '../services/socketService';
 
 const ChatRoomView = ({ room, me, onBack }) => {
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showMembers, setShowMembers] = useState(false); //  Modal pour afficher les membres
   const [editedName, setEditedName] = useState(room.name);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [members, setMembers] = useState([]);
   const [admins, setAdmins] = useState([]);
+  const [playingAudio, setPlayingAudio] = useState(null); 
+  const [audioProgress, setAudioProgress] = useState({});
 
   const flatListRef = useRef(null);
   const recordingRef = useRef(null);
   const durationInterval = useRef(null);
+  const soundRef = useRef(null); //  Référence pour l'audio
 
   const isAdmin = admins.includes(me.id);
 
-  // Charger les messages et membres
+  // Charger les messages et membres + Socket.io
   useEffect(() => {
     loadMessages();
     loadMembers();
+
+    // Rejoindre le groupe Socket.io
+    socketService.joinGroup(room.id);
+    console.log(`Rejoint le groupe Socket.io: ${room.id}`);
+
+    // Écouter les nouveaux messages de groupe
+    socketService.onGroupMessage((newMessage) => {
+      console.log('📩 Nouveau message reçu:', newMessage);
+      
+      if (newMessage.groupId === room.id) {
+        try {
+          db.runSync(
+            `INSERT INTO group_messages (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              newMessage.groupId,
+              newMessage.senderId,
+              newMessage.content,
+              newMessage.type,
+              newMessage.fileName,
+              newMessage.type === 'file' ? newMessage.fileUrl : null,
+              newMessage.type === 'image' ? newMessage.fileUrl : null,
+              newMessage.type === 'audio' ? newMessage.fileUrl : null,
+              newMessage.timestamp
+            ]
+          );
+        } catch (error) {
+          console.error('Erreur insertion message:', error);
+        }
+        
+        loadMessages();
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    });
 
     Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -35,8 +76,16 @@ const ChatRoomView = ({ room, me, onBack }) => {
     });
 
     return () => {
+      socketService.leaveGroup(room.id);
+      console.log(`❌ Quitté le groupe Socket.io: ${room.id}`);
+      
       if (durationInterval.current) {
         clearInterval(durationInterval.current);
+      }
+      
+      //  Nettoyer l'audio
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(err => console.log("Cleanup error", err));
       }
     };
   }, [room.id]);
@@ -76,8 +125,9 @@ const ChatRoomView = ({ room, me, onBack }) => {
     }
   };
 
+  // Envoyer le message via Socket.io
   const handleSendMessage = (content, type = 'text', fileName = null, fileUrl = null) => {
-    if (!content.trim()) return;
+    if (!content.trim() && type === 'text') return;
 
     try {
       const timestamp = Date.now();
@@ -99,6 +149,20 @@ const ChatRoomView = ({ room, me, onBack }) => {
       );
 
       db.runSync('UPDATE groups SET lastUpdate = ? WHERE id = ?', [timestamp, room.id]);
+
+      // Envoyer via Socket.io
+      socketService.sendGroupMessage({
+        groupId: room.id,
+        senderId: me.id,
+        content,
+        type,
+        fileName,
+        fileUrl,
+        imageUrl: type === 'image' ? fileUrl : null,
+        audioUrl: type === 'audio' ? fileUrl : null,
+        timestamp
+      });
+
       loadMessages();
 
       setTimeout(() => {
@@ -108,6 +172,54 @@ const ChatRoomView = ({ room, me, onBack }) => {
     } catch (error) {
       console.error('Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
+    }
+  };
+
+  //  Lecture audio
+  const playAudio = async (uri, messageId) => {
+    try {
+      if (soundRef.current) {
+        try {
+          await soundRef.current.stopAsync();
+          await soundRef.current.unloadAsync();
+        } catch (e) {
+          // Ignorer si déjà déchargé
+        }
+        soundRef.current = null;
+      }
+
+      if (playingAudio === messageId) {
+        setPlayingAudio(null);
+        return;
+      }
+
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: false }
+      );
+      soundRef.current = sound;
+
+      if (status.isLoaded) {
+        sound.setOnPlaybackStatusUpdate((playbackStatus) => {
+          if (playbackStatus.isLoaded) {
+            if (playbackStatus.durationMillis) {
+              const progress = (playbackStatus.positionMillis / playbackStatus.durationMillis) * 100;
+              setAudioProgress(prev => ({ ...prev, [messageId]: progress }));
+            }
+            if (playbackStatus.didJustFinish) {
+              setPlayingAudio(null);
+              setAudioProgress(prev => ({ ...prev, [messageId]: 0 }));
+            }
+          }
+        });
+
+        setPlayingAudio(messageId);
+        await sound.playAsync();
+      }
+    } catch (error) {
+      console.error('Erreur lecture audio:', error);
+      Alert.alert('Erreur', 'Impossible de lire le message vocal');
+      setPlayingAudio(null);
     }
   };
 
@@ -251,6 +363,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
           onPress: () => {
             try {
               db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
+              socketService.leaveGroup(room.id);
               Alert.alert('Succès', 'Vous avez quitté le groupe');
               onBack();
             } catch (error) {
@@ -275,6 +388,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
           onPress: () => {
             try {
               db.runSync('DELETE FROM groups WHERE id = ?', [room.id]);
+              socketService.leaveGroup(room.id);
               Alert.alert('Succès', 'Groupe supprimé');
               onBack();
             } catch (error) {
@@ -315,6 +429,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
     }
   };
 
+  //  Supprimer un message
   const handleDeleteMessage = (messageId) => {
     Alert.alert(
       "Supprimer le message",
@@ -371,18 +486,44 @@ const ChatRoomView = ({ room, me, onBack }) => {
             </View>
           )}
 
-          {item.type === 'audio' && (
+          {/*  Lecteur audio amélioré */}
+          {item.type === 'audio' && item.audioUrl && (
             <View style={styles.audioContainer}>
-              <Ionicons name="mic" size={20} color={isMe ? "#fff" : "#2563eb"} />
-              <Text style={[styles.audioText, isMe ? styles.myText : styles.theirText]}>
-                Message vocal
-              </Text>
+              <TouchableOpacity 
+                style={[styles.audioBtn, isMe ? styles.audioBtnMe : styles.audioBtnTheir]}
+                onPress={() => playAudio(item.audioUrl, item.id.toString())}
+              >
+                {playingAudio === item.id.toString() ? (
+                  <View style={styles.pauseIcon}>
+                    <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
+                    <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
+                  </View>
+                ) : (
+                  <View style={[styles.playIcon, isMe ? styles.playIconMe : styles.playIconTheir]} />
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.audioProgressContainer}>
+                <View style={[styles.audioProgressBar, isMe ? styles.audioProgressBarMe : styles.audioProgressBarTheir]}>
+                  <View style={[
+                    styles.audioProgressFill, 
+                    isMe ? styles.audioProgressFillMe : styles.audioProgressFillTheir,
+                    { width: `${audioProgress[item.id.toString()] || 0}%` }
+                  ]} />
+                </View>
+                <Text style={[styles.audioDuration, isMe ? styles.myText : styles.theirText]}>
+                  {item.content?.match(/\((\d+)s\)/)?.[1] || '0'}s
+                </Text>
+              </View>
             </View>
           )}
 
-          <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
-            {item.content}
-          </Text>
+          {/* Afficher le texte seulement si ce n'est pas un audio pur */}
+          {item.type !== 'audio' && (
+            <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
+              {item.content}
+            </Text>
+          )}
 
           <View style={styles.bottomRow}>
             <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
@@ -411,10 +552,16 @@ const ChatRoomView = ({ room, me, onBack }) => {
           <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
         </TouchableOpacity>
         <Image source={{ uri: room.avatar || 'https://picsum.photos/200' }} style={styles.avatar} />
-        <View style={styles.headerInfo}>
+        
+        {/* Clic sur le nom ou les membres ouvre la liste des membres */}
+        <TouchableOpacity 
+          style={styles.headerInfo}
+          onPress={() => setShowMembers(true)}
+        >
           <Text style={styles.name}>{room.name}</Text>
           <Text style={styles.status}>{members.length} membres</Text>
-        </View>
+        </TouchableOpacity>
+
         <TouchableOpacity onPress={handleCall} style={styles.headerAction}>
           <MaterialIcons name="call" size={22} color="#2563eb" />
         </TouchableOpacity>
@@ -486,7 +633,56 @@ const ChatRoomView = ({ room, me, onBack }) => {
         </View>
       </KeyboardAvoidingView>
 
+      {/*  Modal liste des membres (clic sur nom/nombre) */}
+      <Modal visible={showMembers} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Membres ({members.length})</Text>
+              <TouchableOpacity onPress={() => setShowMembers(false)}>
+                <MaterialIcons name="close" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {members.map(memberId => {
+                const user = getUserInfo(memberId);
+                const isMemberAdmin = admins.includes(memberId);
+                
+                return (
+                  <View key={memberId} style={styles.memberItem}>
+                    <Image source={{ uri: user.avatar }} style={styles.memberAvatar} />
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>
+                        {user.username} {memberId === me.id ? '(Vous)' : ''}
+                      </Text>
+                      <Text style={styles.memberRole}>
+                        {isMemberAdmin ? '👑 Administrateur' : 'Membre'}
+                      </Text>
+                    </View>
+                    
+                    {/* Afficher les actions seulement si on est admin et que ce n'est pas nous */}
+                    {isAdmin && memberId !== me.id && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setShowMembers(false);
+                          setTimeout(() => handleRemoveMember(memberId), 300);
+                        }}
+                        style={styles.removeMemberBtn}
+                      >
+                        <MaterialIcons name="person-remove" size={20} color="#ef4444" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Modal Settings */}
+           {/* Modal Settings */}
       <Modal visible={showSettings} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -532,7 +728,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
                         {user.username} {memberId === me.id ? '(Vous)' : ''}
                       </Text>
                       <Text style={styles.memberRole}>
-                        {admins.includes(memberId) ? '👑 Administrateur' : 'Membre'}
+                        {admins.includes(memberId) ? 'Administrateur' : 'Membre'}
                       </Text>
                     </View>
                     {isAdmin && memberId !== me.id && (
@@ -670,16 +866,98 @@ const styles = StyleSheet.create({
     borderRadius: 10
   },
   fileText: { fontSize: 13, fontWeight: '500', flex: 1 },
+  
+  // STYLES AUDIO AMÉLIORÉS
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 6,
-    padding: 10,
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    borderRadius: 10,
+    padding: 2,
+    minWidth: 180,
   },
-  audioText: { fontSize: 13, fontWeight: '500' },
+  audioBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  audioBtnMe: {
+    backgroundColor: '#fff',
+  },
+  audioBtnTheir: {
+    backgroundColor: '#2563eb',
+  },
+  playIcon: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 12,
+    borderTopWidth: 8,
+    borderBottomWidth: 8,
+    borderTopColor: 'transparent',
+    borderBottomColor: 'transparent',
+    marginLeft: 3,
+  },
+  playIconMe: {
+    borderLeftColor: '#2563eb',
+  },
+  playIconTheir: {
+    borderLeftColor: '#fff',
+  },
+  pauseIcon: {
+    flexDirection: 'row',
+    gap: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pauseBar: {
+    width: 3,
+    height: 14,
+    borderRadius: 1.5,
+  },
+  pauseBarMe: {
+    backgroundColor: '#2563eb',
+  },
+  pauseBarTheir: {
+    backgroundColor: '#fff',
+  },
+  audioProgressContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  audioProgressBar: {
+    height: 4,
+    borderRadius: 2,
+    width: '100%',
+  },
+  audioProgressBarMe: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  audioProgressBarTheir: {
+    backgroundColor: '#e2e8f0',
+  },
+  audioProgressFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  audioProgressFillMe: {
+    backgroundColor: '#fff',
+  },
+  audioProgressFillTheir: {
+    backgroundColor: '#2563eb',
+  },
+  audioDuration: {
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.8,
+  },
+
   msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
   myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
   theirTime: { color: '#94a3b8' },
@@ -762,7 +1040,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     padding: 25,
-    minHeight: '80%',
+    minHeight: '60%',
     maxHeight: '90%',
   },
   innerModalOverlay: {
@@ -787,15 +1065,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f1f5f9',
   },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginVertical: 20,
-    marginTop: 25,
-  },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#64748b' },
-  addMemberBtn: { padding: 5 },
   settingItem: { marginBottom: 20 },
   settingLabel: {
     fontSize: 14,
@@ -837,4 +1106,5 @@ const styles = StyleSheet.create({
   },
   emptyText: { textAlign: 'center', color: '#94a3b8', padding: 20 },
 });
+
 export default ChatRoomView;
