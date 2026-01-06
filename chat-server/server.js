@@ -2,9 +2,22 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const routes = require('./routes');
+require('dotenv').config();
 
 const app = express();
+
+// Middleware
 app.use(cors());
+app.use(express.json());
+
+// Routes API
+app.use('/api', routes);
+
+// Route de test
+app.get('/', (req, res) => {
+  res.json({ message: 'Chat API Server Running', status: 'OK' });
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -18,7 +31,7 @@ const onlineUsers = new Map(); // userId -> socketId
 const userGroups = new Map();  // userId -> Set of groupIds
 
 io.on('connection', (socket) => {
-  console.log(`Utilisateur connecté: ${socket.id}`);
+  console.log(`🔌 Utilisateur connecté: ${socket.id}`);
   
   const userId = socket.handshake.query.userId;
   if (userId) {
@@ -40,19 +53,19 @@ io.on('connection', (socket) => {
     
     if (receiverSocketId) {
       io.to(receiverSocketId).emit('receive_private_message', data);
-      console.log(`Message privé envoyé à ${data.receiverId}`);
+      console.log(`✅ Message privé envoyé à ${data.receiverId}`);
     } else {
       console.log(`⚠️ Utilisateur ${data.receiverId} hors ligne`);
     }
   });
 
-  // CORRECTION: Message de groupe
+  // Message de groupe
   socket.on('group_message', (data) => {
     console.log(`👥 Message de groupe dans ${data.groupId} par ${data.senderId}`);
     
     // Envoyer le message à TOUS les membres du groupe SAUF l'expéditeur
     socket.to(data.groupId).emit('receive_group_message', data);
-    console.log(`Message de groupe diffusé dans ${data.groupId}`);
+    console.log(`✅ Message de groupe diffusé dans ${data.groupId}`);
   });
 
   // Rejoindre un groupe
@@ -76,7 +89,7 @@ io.on('connection', (socket) => {
       userGroups.get(userId).delete(groupId);
     }
     
-    console.log(`${userId} a quitté le groupe ${groupId}`);
+    console.log(`👋 ${userId} a quitté le groupe ${groupId}`);
   });
 
   // Utilisateur en train d'écrire
@@ -92,7 +105,7 @@ io.on('connection', (socket) => {
 
   // Supprimer un message privé
   socket.on('delete_private_message', (data) => {
-    console.log(`Suppression message ${data.messageId}`);
+    console.log(`🗑️ Suppression message ${data.messageId}`);
     const receiverSocketId = onlineUsers.get(data.receiverId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit('message_deleted', data);
@@ -109,12 +122,12 @@ io.on('connection', (socket) => {
       isOnline: false,
     });
     
-    console.log(`${userId} est maintenant hors ligne`);
+    console.log(`⚫ ${userId} est maintenant hors ligne`);
   });
 
   // Déconnexion
   socket.on('disconnect', () => {
-    console.log(`Utilisateur déconnecté: ${socket.id}`);
+    console.log(`🔌 Utilisateur déconnecté: ${socket.id}`);
     
     if (userId) {
       onlineUsers.delete(userId);
@@ -125,13 +138,14 @@ io.on('connection', (socket) => {
         isOnline: false,
       });
       
-      console.log(`${userId} est maintenant hors ligne (déconnexion)`);
+      console.log(`⚫ ${userId} est maintenant hors ligne (déconnexion)`);
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`🚀 Serveur Socket.io démarré sur le port ${PORT}`);
-  console.log(`URL: http://localhost:${PORT}`);
+server.listen(PORT,'0.0.0.0', () => {
+  console.log(`🚀 Serveur Socket.io + API démarré sur le port ${PORT}`);
+  console.log(`📡 API: http://localhost:${PORT}/api`);
+  console.log(`🔌 ..Socket.io: http://localhost:${PORT}`);
 });

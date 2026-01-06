@@ -12,6 +12,7 @@
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
     "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "emoji-picker-react": "^4.16.1",
     "expo": "~54.0.30",
     "expo-av": "~16.0.8",

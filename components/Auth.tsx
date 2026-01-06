@@ -10,11 +10,9 @@ import {
   Alert
 } from 'react-native';
 import { LogIn, Mail, Lock, User as UserIcon, ArrowRight } from 'lucide-react-native';
-import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import ForgotPassword from './ForgotPassword';
-
-const db = SQLite.openDatabaseSync('chatapp.db');
+import { registerUser, loginUser } from '../services/api';
 
 interface AuthProps {
   onLoginSuccess: (user: any) => void;
@@ -36,6 +34,7 @@ const isStrongPassword = (password: string) =>
 const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [showForgot, setShowForgot] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -63,36 +62,43 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
     const cleanEmail = email.toLowerCase().trim();
     const hashedPassword = await hashPassword(password);
 
+    setLoading(true);
+
     try {
       if (isLogin) {
-        const user = db.getFirstSync(
-          'SELECT * FROM users WHERE email = ? AND password = ? LIMIT 1',
-          [cleanEmail, hashedPassword]
-        );
-        if (!user) {
+        // 🔑 CONNEXION via API
+        const response = await loginUser(cleanEmail, hashedPassword);
+        
+        if (response.success && response.user) {
+          Alert.alert("Succès", "Connexion réussie !");
+          onLoginSuccess(response.user);
+        } else {
           Alert.alert("Erreur", "Email ou mot de passe incorrect.");
-          return;
         }
-        onLoginSuccess(user);
       } else {
-        const exists = db.getFirstSync('SELECT id FROM users WHERE email = ?', [cleanEmail]);
-        if (exists) {
-          Alert.alert("Erreur", "Cet email est déjà utilisé.");
-          return;
+        // 📝 INSCRIPTION via API
+        const response = await registerUser(name, cleanEmail, hashedPassword);
+        
+        if (response.success && response.user) {
+          Alert.alert("Succès", "Compte créé avec succès !");
+          onLoginSuccess(response.user);
+        } else {
+          Alert.alert("Erreur", response.error || "Impossible de créer le compte.");
         }
-        const userId = Math.random().toString(36).substring(2, 11);
-        const avatar = `https://i.pravatar.cc/150?u=${userId}`;
-        db.runSync(
-          `INSERT INTO users (id, username, email, password, avatar, bio)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [userId, name, cleanEmail, hashedPassword, avatar, "Disponible"]
-        );
-        Alert.alert("Succès", "Compte créé avec succès !");
-        onLoginSuccess({ id: userId, username: name, email: cleanEmail, avatar });
       }
-    } catch (error) {
-      console.error(error);
-      Alert.alert("Erreur", "Problème lors de l'authentification.");
+    } catch (error: any) {
+      console.error("Erreur authentification:", error);
+      
+      if (error.message.includes('fetch')) {
+        Alert.alert(
+          "Erreur de connexion",
+          "Impossible de se connecter au serveur. Vérifiez que le serveur est démarré."
+        );
+      } else {
+        Alert.alert("Erreur", error.message || "Problème lors de l'authentification.");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -109,7 +115,7 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
       <View style={styles.header}>
         <View style={styles.logoContainer}><LogIn size={40} color="#fff" /></View>
         <Text style={styles.title}>Mns ChatApp</Text>
-        <Text style={styles.subtitle}>Connectez-vous , discutez, partagez !</Text>
+        <Text style={styles.subtitle}>Connectez-vous, discutez, partagez !</Text>
       </View>
 
       <View style={styles.card}>
@@ -137,6 +143,7 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
                 placeholder="Nom complet"
                 value={name}
                 onChangeText={setName}
+                editable={!loading}
               />
             </View>
           )}
@@ -149,6 +156,7 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
+              editable={!loading}
             />
           </View>
 
@@ -160,16 +168,23 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
               value={password}
               onChangeText={setPassword}
               secureTextEntry
+              editable={!loading}
             />
           </View>
 
-          <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-            <Text style={styles.submitText}>{isLogin ? 'Se connecter' : "S'inscrire"}</Text>
-            <ArrowRight size={20} color="#fff" />
+          <TouchableOpacity 
+            style={[styles.submitBtn, loading && styles.submitBtnDisabled]} 
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            <Text style={styles.submitText}>
+              {loading ? 'Chargement...' : (isLogin ? 'Se connecter' : "S'inscrire")}
+            </Text>
+            {!loading && <ArrowRight size={20} color="#fff" />}
           </TouchableOpacity>
 
           {isLogin && (
-            <TouchableOpacity onPress={() => setShowForgot(true)}>
+            <TouchableOpacity onPress={() => setShowForgot(true)} disabled={loading}>
               <Text style={{ color: '#2563eb', marginTop: 10 }}>Mot de passe oublié ?</Text>
             </TouchableOpacity>
           )}
@@ -195,6 +210,7 @@ const styles = StyleSheet.create({
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 15, paddingHorizontal: 15 },
   input: { flex: 1, height: 55, marginLeft: 10, fontSize: 14 },
   submitBtn: { flexDirection: 'row', backgroundColor: '#2563eb', height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 10 },
+  submitBtnDisabled: { backgroundColor: '#94a3b8' },
   submitText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
 });
 
