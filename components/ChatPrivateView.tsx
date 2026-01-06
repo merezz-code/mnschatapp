@@ -38,6 +38,7 @@ import {
 } from '../services/api';
 import socketService from '../services/socketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL } from '../config/api';
 
 
 interface ChatPrivateViewProps {
@@ -80,7 +81,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const otherUserId = chatWith.id;
   const checkBlock = async () => {
   try {
-    const res = await fetch(`http://192.168.1.7:3000/api/blocks/check/${me.id}/${otherUserId}`);
+    const res = await fetch(`${API_URL}/blocks/check/${me.id}/${otherUserId}`);
     const text = await res.text();  // <- voir ce que le serveur renvoie
     console.log('Réponse brute:', text);
     const data = JSON.parse(text);  // ou res.json() si c’est bien du JSON
@@ -93,7 +94,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
   const loadBlockStatus = async () => {
     try {
-      const res = await fetch(`http://192.168.1.7:3000/api/blocks/check/${me.id}/${otherUserId}`);
+      const res = await fetch(`${API_URL}/blocks/check/${me.id}/${otherUserId}`);
       const data = await res.json();
       setIsBlocked(data.blocked);
       await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
@@ -443,7 +444,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const handleBlockUser = async () => {
     try {
       console.log('Utilisateur *' + otherUserId + '* va être bloqué');
-      const res = await fetch('http://192.168.1.7:3000/api/blocks', {
+      const res = await fetch(`${API_URL}/blocks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockerId: me.id, blockedId: otherUserId })
@@ -463,7 +464,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
   const handleUnblockUser = async () => {
     try {
-      const res = await fetch('http://192.168.1.7:3000/api/blocks', {
+      const res = await fetch(`${API_URL}/blocks`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockerId: me.id, blockedId: otherUserId })
