@@ -6,7 +6,7 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { RoomType } from '../types';
 import socketService from '../services/socketService';
-import { getUserGroups, createGroup, getAllUsers, getPrivateChats, getPrivateMessages } from '../services/api';
+import { getUserGroups, createGroup, getAllUsers, getPrivateChats, getPrivateMessages, getUnreadCounts } from '../services/api';
 
 const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkMode }) => {
   const [rooms, setRooms] = useState<any[]>([]);
@@ -54,34 +54,30 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
           chatsResponse.conversations.map(async (conv) => {
             const otherUser = usersResponse.users.find((u: any) => u.id === conv.other_user_id);
             if (!otherUser) return null;
-            try {
-              const messagesResponse = await getPrivateMessages(me.id, conv.other_user_id);
-              const messages = messagesResponse.messages || [];
-              const lastMessage = messages[messages.length - 1];
-              const isMyMessage = lastMessage?.senderId === me.id;
-              const messagePrefix = isMyMessage ? 'Vous: ' : '';
-              return {
-                id: otherUser.id,
-                username: otherUser.username,
-                avatar: otherUser.avatar,
-                is_online: otherUser.is_online,
-                type: 'private',
-                lastMessage: lastMessage?.content ? `${messagePrefix}${lastMessage.content}` : 'Démarrez la conversation',
-                lastTimestamp: conv.max_timestamp,
-              };
-            } catch {
-              return {
-                id: otherUser.id,
-                username: otherUser.username,
-                avatar: otherUser.avatar,
-                is_online: otherUser.is_online,
-                type: 'private',
-                lastMessage: 'Démarrez la conversation',
-                lastTimestamp: conv.max_timestamp,
-              };
-            }
+
+            const messagesResponse = await getPrivateMessages(me.id, conv.other_user_id);
+            const messages = messagesResponse.messages || [];
+            const lastMessage = messages[messages.length - 1];
+
+            // Comptage des messages non lus
+            const unreadCount = messages.filter(m => !m.read && m.senderId !== me.id).length;
+
+            const isMyMessage = lastMessage?.senderId === me.id;
+            const messagePrefix = isMyMessage ? 'Vous: ' : '';
+
+            return {
+              id: otherUser.id,
+              username: otherUser.username,
+              avatar: otherUser.avatar,
+              is_online: otherUser.is_online,
+              type: 'private',
+              lastMessage: lastMessage?.content ? `${messagePrefix}${lastMessage.content}` : 'Démarrez la conversation',
+              lastTimestamp: conv.max_timestamp,
+              unreadCount, // ← ajouté ici
+            };
           })
         );
+
         const filtered = privateChatsWithUser.filter(Boolean);
         filtered.sort((a: any, b: any) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
         setPrivateChats(filtered);
@@ -99,34 +95,86 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
       setLoading(false);
     }
   };
+  const handleOpenPrivateChat = (chat) => {
+    // 1️⃣ Ouvrir la conversation
+    onOpenPrivateChat(chat);
+
+    // 2️⃣ Marquer les messages comme lus côté serveur
+    fetch(`http://192.168.1.7:3000/api/private-messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderId: chat.id, receiverId: me.id })
+    });
+
+    // 3️⃣ Mettre à jour localement pour enlever le badge
+    setPrivateChats(prevChats =>
+      prevChats.map(c =>
+        c.id === chat.id ? { ...c, unreadCount: 0 } : c
+      )
+    );
+  };
+
   const fetchPublicGroups = async () => {
-  try {
-    const res = await fetch('http://192.168.1.7:3000/api/groupes');
-    if (!res.ok) {
-      console.error('Erreur HTTP:', res.status);
-      return;
+    try {
+      const res = await fetch('http://192.168.1.7:3000/api/groupes');
+      if (!res.ok) {
+        console.error('Erreur HTTP:', res.status);
+        return;
+      }
+      const data = await res.json();
+      if (data.success) {
+        setPublicGroups(data.groups); // Mettre à jour le state
+      } else {
+        console.error('Erreur récupération groupes publics:', data.error);
+      }
+    } catch (error) {
+      console.error('❌ Impossible de récupérer les groupes publics:', error);
     }
-    const data = await res.json();
-    if (data.success) {
-      setPublicGroups(data.groups); // Mettre à jour le state
-    } else {
-      console.error('Erreur récupération groupes publics:', data.error);
-    }
-  } catch (error) {
-    console.error('❌ Impossible de récupérer les groupes publics:', error);
-  }
-};
+  };
 
   // Rafraîchissement automatique des groupes publics toutes les 3 secondes
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (activeTab === 'DISCOVER') { // Ne récupérer que si l'onglet Discover est actif
+    // Interval pour Discover
+    const intervalDiscover = setInterval(() => {
+      if (activeTab === 'DISCOVER') {
         fetchPublicGroups();
       }
-    }, 3000); // 3000 ms = 3 secondes
+    }, 3000);
 
-    return () => clearInterval(interval); // Nettoyer l'intervalle quand le composant se démonte
-  }, [activeTab]);
+    // Interval pour messages privés non lus
+    const intervalUnread = setInterval(async () => {
+      if (activeTab === 'PRIVATE') {
+        try {
+          // Appel API pour récupérer le nombre de messages non lus
+          const response = await getUnreadCounts(me.id); // { success: true, counts: [...] }
+          const counts = response?.counts || [];
+
+          setPrivateChats(prevChats =>
+            prevChats.map(chat => {
+              // Vérifie s'il y a des messages non lus
+              const countObj = counts.find(c => c.sender_id === chat.id);
+              const unreadCount = countObj ? countObj.unread_count : 0;
+
+              return {
+                ...chat,
+                // Met à jour uniquement si >0, sinon 0
+                unreadCount
+              };
+            })
+          );
+        } catch (error) {
+          console.error('Erreur fetch unread counts:', error);
+        }
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(intervalDiscover);
+      clearInterval(intervalUnread);
+    };
+  }, [activeTab, me.id]);
+
+
 
   // 🔹 INIT ET SOCKET.IO
   useEffect(() => {
@@ -195,8 +243,9 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
   // 🔹 RENDUS
   const renderPrivateItem = (chat) => {
     const time = chat.lastTimestamp ? new Date(chat.lastTimestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
     return (
-      <TouchableOpacity key={chat.id} onPress={() => onOpenPrivateChat(chat)} style={[styles.item, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}>
+      <TouchableOpacity key={chat.id} onPress={() => handleOpenPrivateChat(chat)} style={[styles.item, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}>
         <View style={styles.avatarContainer}>
           <Image source={{ uri: chat.avatar || `https://i.pravatar.cc/150?u=${chat.id}` }} style={styles.avatar} />
           {chat.is_online === 1 && <View style={styles.onlineIndicator} />}
@@ -205,7 +254,14 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
           <Text style={[styles.name, { color: isDarkMode ? '#fff' : '#1e293b' }]}>{chat.username}</Text>
           <Text style={styles.lastMsg} numberOfLines={1}>{chat.lastMessage}</Text>
         </View>
-        {time ? <Text style={styles.time}>{time}</Text> : null}
+
+        {/* {time ? <Text style={styles.time}>{time}</Text> : null} */}
+        {chat.unreadCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{chat.unreadCount}</Text>
+          </View>
+        )}
+
       </TouchableOpacity>
     );
   };
@@ -282,9 +338,9 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
-       <Modal 
-        visible={isModalOpen} 
-        transparent 
+      <Modal
+        visible={isModalOpen}
+        transparent
         animationType="fade"
         onRequestClose={() => setIsModalOpen(false)}
       >
@@ -293,15 +349,15 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
             <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#000' }]}>
               Nouveau {activeTab === 'PRIVATE' ? 'Chat' : 'Groupe'}
             </Text>
-            
+
             <TextInput
               placeholder="Nom du groupe"
               placeholderTextColor="#94a3b8"
               value={newRoomName}
               onChangeText={setNewRoomName}
               style={[
-                styles.input, 
-                { 
+                styles.input,
+                {
                   backgroundColor: isDarkMode ? '#0f172a' : '#f1f5f9',
                   color: isDarkMode ? '#fff' : '#000'
                 }
@@ -309,14 +365,14 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
             />
 
             <View style={styles.typeRow}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setNewRoomType(RoomType.PUBLIC)}
                 style={[styles.typeBtn, newRoomType === RoomType.PUBLIC && styles.typeActive]}
               >
-                <Ionicons 
-                  name="globe-outline" 
-                  size={32} 
-                  color={newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8'} 
+                <Ionicons
+                  name="globe-outline"
+                  size={32}
+                  color={newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8'}
                 />
                 <Text style={[
                   styles.typeText,
@@ -326,14 +382,14 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
                 </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setNewRoomType(RoomType.PRIVATE)}
                 style={[styles.typeBtn, newRoomType === RoomType.PRIVATE && styles.typeActive]}
               >
-                <Ionicons 
-                  name="lock-closed-outline" 
-                  size={32} 
-                  color={newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8'} 
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={32}
+                  color={newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8'}
                 />
                 <Text style={[
                   styles.typeText,
@@ -345,11 +401,11 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
             </View>
 
             <View style={styles.modalBtns}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => {
                   setIsModalOpen(false);
                   setNewRoomName('');
-                }} 
+                }}
                 style={styles.cancel}
               >
                 <Text style={{ color: '#94a3b8', fontSize: 16 }}>Annuler</Text>
@@ -423,9 +479,41 @@ const styles = StyleSheet.create({
   modalBtns: { flexDirection: 'row', justifyContent: 'space-between' },
   cancel: { padding: 15 },
   create: { backgroundColor: '#2563eb', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 15 },
-
+  unreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    minWidth: 18,
+    paddingHorizontal: 5,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  unreadText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   modal: { width: '90%', borderRadius: 30, padding: 25 },
-    
+  badge: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  }
 });
 
 export default ChatList;

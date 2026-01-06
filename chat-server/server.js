@@ -31,13 +31,7 @@ const userGroups = new Map();
 function isUserOnline(userId) {
   return onlineUsers.has(userId.toString());
 }
-async function isBlocked(senderId, receiverId) {
-  const row = await db.get(
-    `SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?`,
-    [receiverId, senderId]
-  );
-  return !!row;
-}
+
 
 
 io.on('connection', async (socket) => {
@@ -67,23 +61,7 @@ io.on('connection', async (socket) => {
     io.emit('receive_private_message', data);
     console.log(`Message privé diffusé`);
   });
-  socket.on('private_message', async (data) => {
-    const { senderId, receiverId } = data;
-
-    // 🔒 Vérification blocage
-    const blocked = await isBlocked(senderId, receiverId);
-    if (blocked) {
-      socket.emit('message_blocked', {
-        reason: 'USER_BLOCKED'
-      });
-      return;
-    }
-     // ✅ Message autorisé
-    const receiverSocketId = onlineUsers.get(receiverId);
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('receive_private_message', data);
-    }
-  });
+  
 
   socket.on('group_message', (data) => {
     console.log(`👥 Message de groupe dans ${data.groupId} par ${data.senderId}`);

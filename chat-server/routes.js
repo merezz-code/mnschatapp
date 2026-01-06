@@ -463,6 +463,35 @@ router.delete('/blocks', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+// routes/messages.js
+router.get('/private-messages/unread-count/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const result = await query(
+      `SELECT sender_id, COUNT(*) AS unread_count
+       FROM private_messages
+       WHERE receiver_id = $1 AND is_read = 0
+       GROUP BY sender_id`,
+      [userId]
+    );
+
+    res.json({ success: true, counts: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/private-messages/mark-read', async (req, res) => {
+  const { senderId, receiverId } = req.body;
+  await query(
+    `UPDATE private_messages SET is_read = 1
+     WHERE sender_id = $1 AND receiver_id = $2 AND is_read = 0`,
+    [senderId, receiverId]
+  );
+  res.json({ success: true });
+});
+
+
 
 
 module.exports = router;
