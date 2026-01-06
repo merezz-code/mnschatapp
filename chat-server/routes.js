@@ -464,34 +464,55 @@ router.delete('/blocks', async (req, res) => {
   }
 });
 // routes/messages.js
-router.get('/private-messages/unread-count/:userId', async (req, res) => {
+// Backend - routes.js
+router.get('/messages/unread-count/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    console.log('📊 [BACKEND] Récupération unread count pour userId:', userId);
+    
     const result = await query(
-      `SELECT sender_id, COUNT(*) AS unread_count
+      `SELECT sender_id, COUNT(*)::INTEGER AS unread_count
        FROM private_messages
        WHERE receiver_id = $1 AND is_read = 0
        GROUP BY sender_id`,
       [userId]
     );
 
-    res.json({ success: true, counts: result.rows });
+    console.log('✅ [BACKEND] Résultat:', result.rows);
+    
+    // ✅ IMPORTANT: Retourner success: true
+    res.json({ 
+      success: true, 
+      counts: result.rows 
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ [BACKEND] Erreur:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
-router.post('/private-messages/mark-read', async (req, res) => {
-  const { senderId, receiverId } = req.body;
-  await query(
-    `UPDATE private_messages SET is_read = 1
-     WHERE sender_id = $1 AND receiver_id = $2 AND is_read = 0`,
-    [senderId, receiverId]
-  );
-  res.json({ success: true });
+
+router.post('/messages/mark-read', async (req, res) => {
+  try {
+    const { senderId, receiverId } = req.body;
+    console.log('📝 Marquage comme lu:', { senderId, receiverId });
+    
+    const result = await query(
+      `UPDATE private_messages SET is_read = 1
+       WHERE sender_id = $1 AND receiver_id = $2 AND is_read = 0`,
+      [senderId, receiverId]
+    );
+    
+    console.log('✅ Messages marqués comme lus:', result.rowCount);
+    res.json({ success: true, markedCount: result.rowCount });
+  } catch (error) {
+    console.error('❌ Erreur mark-read:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
-
-
 
 
 module.exports = router;
