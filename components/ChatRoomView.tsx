@@ -1,69 +1,82 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Image, KeyboardAvoidingView, Platform, Modal, Alert, ScrollView } from 'react-native';
-import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  TextInput, 
+  TouchableOpacity, 
+  Image, 
+  KeyboardAvoidingView, 
+  Platform, 
+  Modal, 
+  Alert, 
+  ScrollView,
+  ActivityIndicator
+} from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
-import { db } from '../services/database';
+import { 
+  getGroupMessages, 
+  saveGroupMessage, 
+  getGroupMembers,
+  addGroupMember,
+  removeGroupMember,
+  getAllUsers,
+  updateGroupName,
+  deleteGroup
+} from '../services/api';
 import socketService from '../services/socketService';
 
-const ChatRoomView = ({ room, me, onBack }) => {
+interface ChatRoomViewProps {
+  room: any;
+  me: any;
+  onBack: () => void;
+  isDarkMode?: boolean;
+}
+
+const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMode = false }) => {
   const [inputText, setInputText] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [showMembers, setShowMembers] = useState(false); //  Modal pour afficher les membres
+  const [showMembers, setShowMembers] = useState(false);
   const [editedName, setEditedName] = useState(room.name);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [members, setMembers] = useState([]);
-  const [admins, setAdmins] = useState([]);
-  const [playingAudio, setPlayingAudio] = useState(null); 
-  const [audioProgress, setAudioProgress] = useState({});
+  const [members, setMembers] = useState<any[]>([]);
+  const [admins, setAdmins] = useState<string[]>([]);
+  const [playingAudio, setPlayingAudio] = useState<string | null>(null); 
+  const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const flatListRef = useRef(null);
-  const recordingRef = useRef(null);
-  const durationInterval = useRef(null);
-  const soundRef = useRef(null); //  Référence pour l'audio
+  const flatListRef = useRef<FlatList>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const durationInterval = useRef<NodeJS.Timeout | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   const isAdmin = admins.includes(me.id);
 
-  // Charger les messages et membres + Socket.io
   useEffect(() => {
     loadMessages();
     loadMembers();
+    loadAllUsers();
 
     // Rejoindre le groupe Socket.io
-    socketService.joinGroup(room.id);
-    console.log(`Rejoint le groupe Socket.io: ${room.id}`);
+    socketService.joinGroup(room.id.toString());
+    console.log(`👥 Rejoint le groupe Socket.io: ${room.id}`);
 
     // Écouter les nouveaux messages de groupe
     socketService.onGroupMessage((newMessage) => {
-      console.log('📩 Nouveau message reçu:', newMessage);
+      console.log('📩 Nouveau message de groupe reçu');
       
-      if (newMessage.groupId === room.id) {
-        try {
-          db.runSync(
-            `INSERT INTO group_messages (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              newMessage.groupId,
-              newMessage.senderId,
-              newMessage.content,
-              newMessage.type,
-              newMessage.fileName,
-              newMessage.type === 'file' ? newMessage.fileUrl : null,
-              newMessage.type === 'image' ? newMessage.fileUrl : null,
-              newMessage.type === 'audio' ? newMessage.fileUrl : null,
-              newMessage.timestamp
-            ]
-          );
-        } catch (error) {
-          console.error('Erreur insertion message:', error);
-        }
-        
+      if (newMessage.groupId.toString() === room.id.toString()) {
         loadMessages();
+        
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -76,93 +89,95 @@ const ChatRoomView = ({ room, me, onBack }) => {
     });
 
     return () => {
-      socketService.leaveGroup(room.id);
+      socketService.leaveGroup(room.id.toString());
       console.log(`❌ Quitté le groupe Socket.io: ${room.id}`);
       
       if (durationInterval.current) {
         clearInterval(durationInterval.current);
       }
       
-      //  Nettoyer l'audio
       if (soundRef.current) {
         soundRef.current.unloadAsync().catch(err => console.log("Cleanup error", err));
       }
     };
   }, [room.id]);
 
-  const loadMessages = () => {
+  const loadMessages = async () => {
     try {
-      const msgs = db.getAllSync(
-        `SELECT 
-          id, group_id as roomId, sender_id as senderId, content, type,
-          file_name as fileName, file_url as fileUrl, 
-          image_url as imageUrl, audio_url as audioUrl, timestamp
-         FROM group_messages 
-         WHERE group_id = ? 
-         ORDER BY timestamp ASC`,
-        [room.id]
-      );
-      setMessages(msgs);
+      const response = await getGroupMessages(room.id.toString());
+      
+      if (response.success && response.messages) {
+        setMessages(response.messages);
+        console.log(`✅ ${response.messages.length} messages chargés`);
+      }
     } catch (error) {
-      console.error('Erreur chargement messages:', error);
+      console.error('❌ Erreur chargement messages:', error);
+      Alert.alert('Erreur', 'Impossible de charger les messages');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const loadMembers = () => {
+  const loadMembers = async () => {
     try {
-      const membersData = db.getAllSync(
-        'SELECT user_id, role FROM group_members WHERE group_id = ?',
-        [room.id]
-      );
-
-      const memberIds = membersData.map(m => m.user_id);
-      const adminIds = membersData.filter(m => m.role === 'admin').map(m => m.user_id);
-
-      setMembers(memberIds);
-      setAdmins(adminIds);
+      const response = await getGroupMembers(room.id.toString());
+      
+      if (response.success && response.members) {
+        const membersList = response.members.map((m: any) => m.id);
+        const adminsList = response.members.filter((m: any) => m.role === 'admin').map((m: any) => m.id);
+        
+        setMembers(membersList);
+        setAdmins(adminsList);
+        console.log(`✅ ${membersList.length} membres chargés`);
+      }
     } catch (error) {
-      console.error('Erreur chargement membres:', error);
+      console.error('❌ Erreur chargement membres:', error);
     }
   };
 
-  // Envoyer le message via Socket.io
-  const handleSendMessage = (content, type = 'text', fileName = null, fileUrl = null) => {
+  const loadAllUsers = async () => {
+    try {
+      const response = await getAllUsers();
+      
+      if (response.success && response.users) {
+        setAllUsers(response.users);
+      }
+    } catch (error) {
+      console.error('❌ Erreur chargement utilisateurs:', error);
+    }
+  };
+
+  const handleSendMessage = async (
+    content: string, 
+    type: string = 'text', 
+    fileName: string | null = null, 
+    fileUrl: string | null = null
+  ) => {
     if (!content.trim() && type === 'text') return;
 
     try {
       const timestamp = Date.now();
 
-      db.runSync(
-        `INSERT INTO group_messages (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          room.id,
-          me.id,
-          content,
-          type,
-          fileName,
-          type === 'file' ? fileUrl : null,
-          type === 'image' ? fileUrl : null,
-          type === 'audio' ? fileUrl : null,
-          timestamp
-        ]
-      );
-
-      db.runSync('UPDATE groups SET lastUpdate = ? WHERE id = ?', [timestamp, room.id]);
-
-      // Envoyer via Socket.io
-      socketService.sendGroupMessage({
-        groupId: room.id,
+      const messageData = {
+        groupId: room.id.toString(),
         senderId: me.id,
         content,
         type,
-        fileName,
-        fileUrl,
-        imageUrl: type === 'image' ? fileUrl : null,
-        audioUrl: type === 'audio' ? fileUrl : null,
+        fileName: fileName || undefined,
+        fileUrl: fileUrl || undefined,
+        imageUrl: type === 'image' ? fileUrl || undefined : undefined,
+        audioUrl: type === 'audio' ? fileUrl || undefined : undefined,
         timestamp
-      });
+      };
 
+      // Sauvegarder dans la DB via API
+      await saveGroupMessage(messageData);
+
+      // Envoyer via Socket.io
+      socketService.sendGroupMessage(messageData);
+
+      console.log('✅ Message de groupe envoyé');
+      
       loadMessages();
 
       setTimeout(() => {
@@ -170,13 +185,12 @@ const ChatRoomView = ({ room, me, onBack }) => {
       }, 100);
 
     } catch (error) {
-      console.error('Erreur envoi message:', error);
+      console.error('❌ Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
     }
   };
 
-  //  Lecture audio
-  const playAudio = async (uri, messageId) => {
+  const playAudio = async (uri: string, messageId: string) => {
     try {
       if (soundRef.current) {
         try {
@@ -217,7 +231,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
         await sound.playAsync();
       }
     } catch (error) {
-      console.error('Erreur lecture audio:', error);
+      console.error('❌ Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
@@ -233,7 +247,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       mediaTypes: ['images'],
       quality: 0.7
     });
-    if (!result.canceled) {
+    if (!result.canceled && result.assets && result.assets[0]) {
       handleSendMessage("📷 Image", 'image', 'photo.jpg', result.assets[0].uri);
     }
   };
@@ -272,7 +286,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
       }, 1000);
 
     } catch (err) {
-      console.error('Erreur enregistrement:', err);
+      console.error('❌ Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible d'enregistrer l'audio");
     }
   };
@@ -296,38 +310,35 @@ const ChatRoomView = ({ room, me, onBack }) => {
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error('Erreur arrêt enregistrement:', err);
+      console.error('❌ Erreur arrêt enregistrement:', err);
     }
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     try {
-      db.runSync('UPDATE groups SET name = ?, lastUpdate = ? WHERE id = ?', [editedName, Date.now(), room.id]);
+      await updateGroupName(room.id.toString(), editedName);
       Alert.alert('Succès', 'Nom du groupe modifié');
       setShowSettings(false);
       room.name = editedName;
     } catch (error) {
-      console.error('Erreur mise à jour:', error);
+      console.error('❌ Erreur mise à jour:', error);
       Alert.alert('Erreur', 'Impossible de modifier le nom');
     }
   };
 
-  const handleAddMember = (userId) => {
+  const handleAddMember = async (userId: string) => {
     try {
-      db.runSync(
-        'INSERT OR IGNORE INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
-        [room.id, userId, 'member']
-      );
+      await addGroupMember(room.id.toString(), userId, 'member');
       loadMembers();
       setShowAddMember(false);
       Alert.alert('Succès', 'Membre ajouté');
     } catch (error) {
-      console.error('Erreur ajout membre:', error);
+      console.error('❌ Erreur ajout membre:', error);
       Alert.alert('Erreur', "Impossible d'ajouter le membre");
     }
   };
 
-  const handleRemoveMember = (userId) => {
+  const handleRemoveMember = (userId: string) => {
     Alert.alert(
       "Retirer le membre",
       "Voulez-vous retirer ce membre du groupe ?",
@@ -336,13 +347,13 @@ const ChatRoomView = ({ room, me, onBack }) => {
         {
           text: "Retirer",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
-              db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, userId]);
+              await removeGroupMember(room.id.toString(), userId);
               loadMembers();
               Alert.alert('Succès', 'Membre retiré');
             } catch (error) {
-              console.error('Erreur retrait membre:', error);
+              console.error('❌ Erreur retrait membre:', error);
               Alert.alert('Erreur', 'Impossible de retirer le membre');
             }
           }
@@ -360,14 +371,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
         {
           text: "Quitter",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
-              db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
-              socketService.leaveGroup(room.id);
+              await removeGroupMember(room.id.toString(), me.id);
+              socketService.leaveGroup(room.id.toString());
               Alert.alert('Succès', 'Vous avez quitté le groupe');
               onBack();
             } catch (error) {
-              console.error('Erreur quitter groupe:', error);
+              console.error('❌ Erreur quitter groupe:', error);
               Alert.alert('Erreur', 'Impossible de quitter le groupe');
             }
           }
@@ -385,14 +396,14 @@ const ChatRoomView = ({ room, me, onBack }) => {
         {
           text: "Supprimer",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
-              db.runSync('DELETE FROM groups WHERE id = ?', [room.id]);
-              socketService.leaveGroup(room.id);
+              await deleteGroup(room.id.toString());
+              socketService.leaveGroup(room.id.toString());
               Alert.alert('Succès', 'Groupe supprimé');
               onBack();
             } catch (error) {
-              console.error('Erreur suppression:', error);
+              console.error('❌ Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de supprimer le groupe');
             }
           }
@@ -405,32 +416,26 @@ const ChatRoomView = ({ room, me, onBack }) => {
     Alert.alert('Appel vocal', 'Fonctionnalité en développement...');
   };
 
-  const formatDuration = (seconds) => {
+  const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const getUserInfo = (userId) => {
-    try {
-      const user = db.getFirstSync('SELECT * FROM users WHERE id = ?', [userId]);
-      return user || { username: 'Utilisateur', avatar: 'https://picsum.photos/100' };
-    } catch (error) {
-      return { username: 'Utilisateur', avatar: 'https://picsum.photos/100' };
-    }
+  const getUserInfo = (userId: string) => {
+    const user = allUsers.find(u => u.id === userId);
+    return user || { 
+      id: userId,
+      username: 'Utilisateur', 
+      avatar: `https://i.pravatar.cc/150?u=${userId}` 
+    };
   };
 
   const getAvailableUsers = () => {
-    try {
-      const allUsers = db.getAllSync('SELECT * FROM users');
-      return allUsers.filter(u => !members.includes(u.id) && u.id !== me.id);
-    } catch (error) {
-      return [];
-    }
+    return allUsers.filter(u => !members.includes(u.id) && u.id !== me.id);
   };
 
-  //  Supprimer un message
-  const handleDeleteMessage = (messageId) => {
+  const handleDeleteMessage = (messageId: number) => {
     Alert.alert(
       "Supprimer le message",
       "Voulez-vous vraiment supprimer ce message ?",
@@ -439,11 +444,10 @@ const ChatRoomView = ({ room, me, onBack }) => {
         {
           text: "Supprimer",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
-              db.runSync('DELETE FROM group_messages WHERE id = ?', [messageId]);
-              loadMessages();
-              Alert.alert('Succès', 'Message supprimé');
+              // TODO: Implémenter deleteGroupMessage dans l'API
+              Alert.alert('Info', 'Fonction de suppression à implémenter côté serveur');
             } catch (error) {
               Alert.alert('Erreur', 'Impossible de supprimer le message');
             }
@@ -453,7 +457,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
     );
   };
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = ({ item }: { item: any }) => {
     const isMe = item.senderId === me.id;
     const sender = getUserInfo(item.senderId);
 
@@ -486,7 +490,6 @@ const ChatRoomView = ({ room, me, onBack }) => {
             </View>
           )}
 
-          {/*  Lecteur audio amélioré */}
           {item.type === 'audio' && item.audioUrl && (
             <View style={styles.audioContainer}>
               <TouchableOpacity 
@@ -518,7 +521,6 @@ const ChatRoomView = ({ room, me, onBack }) => {
             </View>
           )}
 
-          {/* Afficher le texte seulement si ce n'est pas un audio pur */}
           {item.type !== 'audio' && (
             <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
               {item.content}
@@ -545,15 +547,25 @@ const ChatRoomView = ({ room, me, onBack }) => {
     );
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={{ marginTop: 20, color: '#64748b' }}>Chargement des messages...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
         </TouchableOpacity>
-        <Image source={{ uri: room.avatar || 'https://picsum.photos/200' }} style={styles.avatar} />
+        <Image source={{ uri: room.avatar || `https://picsum.photos/seed/${room.id}/200` }} style={styles.avatar} />
         
-        {/* Clic sur le nom ou les membres ouvre la liste des membres */}
         <TouchableOpacity 
           style={styles.headerInfo}
           onPress={() => setShowMembers(true)}
@@ -633,7 +645,7 @@ const ChatRoomView = ({ room, me, onBack }) => {
         </View>
       </KeyboardAvoidingView>
 
-      {/*  Modal liste des membres (clic sur nom/nombre) */}
+      {/* Modal liste des membres */}
       <Modal visible={showMembers} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -661,7 +673,6 @@ const ChatRoomView = ({ room, me, onBack }) => {
                       </Text>
                     </View>
                     
-                    {/* Afficher les actions seulement si on est admin et que ce n'est pas nous */}
                     {isAdmin && memberId !== me.id && (
                       <TouchableOpacity
                         onPress={() => {
@@ -682,7 +693,6 @@ const ChatRoomView = ({ room, me, onBack }) => {
       </Modal>
 
       {/* Modal Settings */}
-           {/* Modal Settings */}
       <Modal visible={showSettings} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -798,6 +808,11 @@ const ChatRoomView = ({ room, me, onBack }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -866,8 +881,6 @@ const styles = StyleSheet.create({
     borderRadius: 10
   },
   fileText: { fontSize: 13, fontWeight: '500', flex: 1 },
-  
-  // STYLES AUDIO AMÉLIORÉS
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -957,7 +970,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     opacity: 0.8,
   },
-
   msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
   myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
   theirTime: { color: '#94a3b8' },
@@ -1080,19 +1092,74 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  saveBtn: { backgroundColor: '#2563eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 15, gap: 10, marginTop: 10 },
+  saveBtn: { 
+    backgroundColor: '#2563eb', 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 12, 
+    borderRadius: 15, 
+    gap: 10, 
+    marginTop: 10 
+  },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
-  memberItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, padding: 10, backgroundColor: '#f8fafc', borderRadius: 15 },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    marginTop: 10
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0f172a'
+  },
+  addMemberBtn: {
+    padding: 8
+  },
+  memberItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    marginBottom: 15, 
+    padding: 10, 
+    backgroundColor: '#f8fafc', 
+    borderRadius: 15 
+  },
   memberAvatar: { width: 40, height: 40, borderRadius: 10 },
   memberInfo: { flex: 1, marginLeft: 12 },
   memberName: { fontSize: 14, fontWeight: 'bold' },
   memberRole: { fontSize: 11, color: '#94a3b8' },
   removeMemberBtn: { padding: 10 },
-  memberSelect: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  memberSelect: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 15, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#f1f5f9' 
+  },
   actionsContainer: { marginTop: 30, gap: 15 },
-  leaveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, borderColor: '#ef4444', backgroundColor: '#fff', borderWidth: 1 },
+  leaveBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 18, 
+    borderRadius: 20, 
+    gap: 10, 
+    borderColor: '#ef4444', 
+    backgroundColor: '#fff', 
+    borderWidth: 1 
+  },
   leaveBtnText: { color: '#ef4444', fontWeight: 'bold' },
-  deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 18, borderRadius: 20, gap: 10, backgroundColor: '#ef4444' },
+  deleteBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 18, 
+    borderRadius: 20, 
+    gap: 10, 
+    backgroundColor: '#ef4444' 
+  },
   deleteBtnText: { color: '#fff', fontWeight: 'bold' },
   bottomRow: {
     flexDirection: 'row',
@@ -1104,7 +1171,11 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     padding: 4,
   },
-  emptyText: { textAlign: 'center', color: '#94a3b8', padding: 20 },
+  emptyText: { 
+    textAlign: 'center', 
+    color: '#94a3b8', 
+    padding: 20 
+  },
 });
 
 export default ChatRoomView;

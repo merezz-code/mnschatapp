@@ -4,9 +4,9 @@ import {
   ScrollView, Image, Modal, Alert
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
-import { db } from '../services/database';
 import { RoomType } from '../types';
 import socketService from '../services/socketService';
+import { getUserGroups, createGroup, getAllUsers, getPrivateChats, getPrivateMessages } from '../services/api';
 
 const ChatList = ({ 
   me, 
@@ -17,13 +17,15 @@ const ChatList = ({
 }) => {
   const [rooms, setRooms] = useState<any[]>([]);
   const [privateChats, setPrivateChats] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'PRIVATE' | 'GROUPS' | 'DISCOVER'>('PRIVATE');
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomType, setNewRoomType] = useState(RoomType.PUBLIC);
+  const [loading, setLoading] = useState(false);
 
-  //  NOUVEAU: Écouter les nouveaux messages pour mettre à jour la liste
+  // Écouter les nouveaux messages pour mettre à jour la liste
   useEffect(() => {
     // Écouter les messages privés
     socketService.onPrivateMessage((message) => {
@@ -34,83 +36,113 @@ const ChatList = ({
     // Écouter les messages de groupe
     socketService.onGroupMessage((message) => {
       console.log('📩 Nouveau message de groupe reçu dans la liste:', message);
-      fetchData(); // Rafraîchir la liste
+      fetchData();
     });
 
     // Écouter les changements de statut en ligne
     socketService.onUserStatusChange((data) => {
       console.log('👤 Statut utilisateur changé:', data);
-      fetchData(); // Rafraîchir pour mettre à jour le statut en ligne
+      fetchData();
     });
 
     return () => {
-      // Pas besoin de nettoyer car socketService est un singleton
+      // Socket.io est un singleton, pas besoin de nettoyer
     };
   }, []);
 
-  const fetchData = () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      // Groupes
-      const allRooms = db.getAllSync('SELECT * FROM groups ORDER BY lastUpdate DESC');
-      const roomsWithMembers = allRooms.map(room => {
-        const members = db.getAllSync('SELECT user_id, role FROM group_members WHERE group_id = ?', [room.id]);
-        const isAdmin = members.some(m => m.user_id === me.id && m.role === 'admin');
-        return { 
-          ...room, 
-          members: members.map(m => m.user_id),
-          isAdmin 
-        };
-      });
-      setRooms(roomsWithMembers);
+      // 1. Récupérer les groupes de l'utilisateur
+      const groupsResponse = await getUserGroups(me.id);
+      if (groupsResponse.success) {
+        // Récupérer les membres pour chaque groupe
+        const roomsWithMembers = await Promise.all(
+          groupsResponse.groups.map(async (room) => {
+            try {
+              const membersResponse = await fetch(`http://10.120.62.243:3000/api/groups/${room.id}/members`);
+              const membersData = await membersResponse.json();
+              
+              if (membersData.success) {
+                const memberIds = membersData.members.map((m: any) => m.id);
+                const isAdmin = membersData.members.some((m: any) => m.id === me.id && m.role === 'admin');
+                
+                return {
+                  ...room,
+                  members: memberIds,
+                  isAdmin
+                };
+              }
+              return { ...room, members: [], isAdmin: false };
+            } catch (error) {
+              console.error('Erreur récupération membres:', error);
+              return { ...room, members: [], isAdmin: false };
+            }
+          })
+        );
+        
+        setRooms(roomsWithMembers);
+      }
 
-      // Conversations privées
-      const lastTimestamps = db.getAllSync(`
-        SELECT 
-          CASE 
-            WHEN sender_id = ? THEN receiver_id 
-            ELSE sender_id 
-          END AS other_user_id,
-          MAX(timestamp) AS max_timestamp
-        FROM private_messages
-        WHERE sender_id = ? OR receiver_id = ?
-        GROUP BY other_user_id
-      `, [me.id, me.id, me.id]);
+      // 2. Récupérer tous les utilisateurs pour les conversations privées
+      const usersResponse = await getAllUsers();
+      if (usersResponse.success) {
+        setAllUsers(usersResponse.users);
+      }
 
-      const privateChatsWithUser = lastTimestamps.map(conv => {
-        const lastMessageRow = db.getFirstSync(`
-          SELECT content, sender_id
-          FROM private_messages
-          WHERE timestamp = ?
-            AND (
-              (sender_id = ? AND receiver_id = ?) OR
-              (sender_id = ? AND receiver_id = ?)
-            )
-          LIMIT 1
-        `, [conv.max_timestamp, me.id, conv.other_user_id, conv.other_user_id, me.id]);
+      // 3. Récupérer les conversations privées
+      const chatsResponse = await getPrivateChats(me.id);
+      if (chatsResponse.success) {
+        const privateChatsWithUser = await Promise.all(
+          chatsResponse.conversations.map(async (conv) => {
+            const otherUser = usersResponse.users.find((u: any) => u.id === conv.other_user_id);
+            
+            if (!otherUser) return null;
 
-        const otherUser = db.getFirstSync('SELECT id, username, avatar, is_online FROM users WHERE id = ?', [conv.other_user_id]);
+            // Récupérer le dernier message
+            try {
+              const messagesResponse = await getPrivateMessages(me.id, conv.other_user_id);
+              const messages = messagesResponse.messages || [];
+              const lastMessage = messages[messages.length - 1];
 
-        if (!otherUser) return null;
+              const isMyMessage = lastMessage?.senderId === me.id;
+              const messagePrefix = isMyMessage ? 'Vous: ' : '';
 
-        //  AMÉLIORATION: Ajouter "Vous:" si c'est notre message
-        const isMyMessage = lastMessageRow?.sender_id === me.id;
-        const messagePrefix = isMyMessage ? 'Vous: ' : '';
+              return {
+                id: otherUser.id,
+                username: otherUser.username,
+                avatar: otherUser.avatar,
+                is_online: otherUser.is_online,
+                type: 'private',
+                lastMessage: lastMessage?.content 
+                  ? `${messagePrefix}${lastMessage.content}` 
+                  : 'Démarrez la conversation',
+                lastTimestamp: conv.max_timestamp,
+              };
+            } catch (error) {
+              console.error('Erreur récupération messages:', error);
+              return {
+                id: otherUser.id,
+                username: otherUser.username,
+                avatar: otherUser.avatar,
+                is_online: otherUser.is_online,
+                type: 'private',
+                lastMessage: 'Démarrez la conversation',
+                lastTimestamp: conv.max_timestamp,
+              };
+            }
+          })
+        );
 
-        return {
-          id: otherUser.id,
-          username: otherUser.username,
-          avatar: otherUser.avatar,
-          is_online: otherUser.is_online,
-          type: 'private',
-          lastMessage: lastMessageRow?.content ? `${messagePrefix}${lastMessageRow.content}` : 'Démarrez la conversation',
-          lastTimestamp: conv.max_timestamp,
-        };
-      }).filter(Boolean);
-
-      privateChatsWithUser.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
-      setPrivateChats(privateChatsWithUser);
+        const filtered = privateChatsWithUser.filter(Boolean);
+        filtered.sort((a: any, b: any) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+        setPrivateChats(filtered);
+      }
     } catch (error) {
       console.error('Erreur récupération données:', error);
+      Alert.alert('Erreur', 'Impossible de charger les données. Vérifiez votre connexion.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -133,7 +165,7 @@ const ChatList = ({
     room.is_private === 0
   );
 
-  // === SUPPRESSION / QUITTER ===
+  // Supprimer une conversation privée
   const handleLongPressPrivate = (chat) => {
     Alert.alert(
       "Supprimer la conversation",
@@ -143,12 +175,20 @@ const ChatList = ({
         {
           text: "Supprimer",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             try {
-              db.runSync(
-                'DELETE FROM private_messages WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
-                [me.id, chat.id, chat.id, me.id]
-              );
+              // Supprimer via API
+              const messagesResponse = await getPrivateMessages(me.id, chat.id);
+              const messages = messagesResponse.messages || [];
+              
+              for (const msg of messages) {
+                await fetch('http://10.120.62.243:3000/api/private-messages/delete-local', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId: me.id, messageId: msg.id })
+                });
+              }
+              
               fetchData();
               Alert.alert('Supprimée', `Conversation avec ${chat.username} supprimée`);
             } catch (error) {
@@ -160,16 +200,19 @@ const ChatList = ({
     );
   };
 
+  // Quitter/Supprimer un groupe
   const handleLongPressGroup = (room) => {
     const options = [
       { text: "Annuler", style: "cancel" },
       {
         text: "Quitter le groupe",
         style: "default",
-        onPress: () => {
+        onPress: async () => {
           try {
-            db.runSync('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
-            //  NOUVEAU: Quitter le groupe Socket.io
+            await fetch(`http://10.120.62.243:3000/api/groups/${room.id}/members/${me.id}`, {
+              method: 'DELETE'
+            });
+            
             socketService.leaveGroup(room.id);
             fetchData();
             Alert.alert('Quitter', `Vous avez quitté "${room.name}"`);
@@ -193,10 +236,12 @@ const ChatList = ({
               {
                 text: "Supprimer définitivement",
                 style: "destructive",
-                onPress: () => {
+                onPress: async () => {
                   try {
-                    db.runSync('DELETE FROM groups WHERE id = ?', [room.id]);
-                    //  NOUVEAU: Quitter le groupe Socket.io
+                    await fetch(`http://10.120.62.243:3000/api/groups/${room.id}`, {
+                      method: 'DELETE'
+                    });
+                    
                     socketService.leaveGroup(room.id);
                     fetchData();
                     Alert.alert('Supprimé', `Le groupe "${room.name}" a été supprimé`);
@@ -214,58 +259,51 @@ const ChatList = ({
     Alert.alert(room.name, "Que voulez-vous faire ?", options);
   };
 
-  //  AMÉLIORATION: Création groupe avec Socket.io
-  const handleCreateRoom = () => {
+  // Créer un groupe
+  const handleCreateRoom = async () => {
     if (!newRoomName.trim()) {
       Alert.alert('Erreur', 'Veuillez entrer un nom de groupe');
       return;
     }
 
     try {
-      const timestamp = Date.now();
-      
-      db.runSync(
-        'INSERT INTO groups (name, avatar, is_private, created_by, lastUpdate) VALUES (?, ?, ?, ?, ?)',
-        [
-          newRoomName.trim(),
-          `https://picsum.photos/seed/${newRoomName}/200`,
-          newRoomType === RoomType.PRIVATE ? 1 : 0,
-          me.id,
-          timestamp
-        ]
+      const response = await createGroup(
+        newRoomName.trim(),
+        me.id,
+        newRoomType === RoomType.PRIVATE
       );
 
-      const lastId = db.getFirstSync('SELECT id FROM groups ORDER BY ROWID DESC LIMIT 1').id;
-      db.runSync('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)', [lastId, me.id, 'admin']);
+      if (response.success) {
+        // Rejoindre le groupe Socket.io automatiquement
+        socketService.joinGroup(response.group.id);
+        console.log(`✅ Groupe créé et rejoint: ${response.group.id}`);
 
-      //  NOUVEAU: Rejoindre le groupe Socket.io automatiquement
-      socketService.joinGroup(lastId);
-      console.log(`✅ Groupe créé et rejoint: ${lastId}`);
-
-      fetchData();
-      setIsModalOpen(false);
-      setNewRoomName('');
-      Alert.alert('Succès', 'Groupe créé avec succès!');
+        fetchData();
+        setIsModalOpen(false);
+        setNewRoomName('');
+        Alert.alert('Succès', 'Groupe créé avec succès!');
+      }
     } catch (error) {
       console.error('Erreur création groupe:', error);
       Alert.alert('Erreur', 'Impossible de créer le groupe.');
     }
   };
 
-  const handleJoinRoom = (room) => {
+  // Rejoindre un groupe public
+  const handleJoinRoom = async (room) => {
     try {
-      const alreadyMember = db.getFirstSync('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?', [room.id, me.id]);
-      if (!alreadyMember) {
-        db.runSync('INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)', [room.id, me.id, 'member']);
-        
-        //  NOUVEAU: Rejoindre le groupe Socket.io
+      const response = await fetch(`http://10.120.62.243:3000/api/groups/${room.id}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: me.id, role: 'member' })
+      });
+
+      if (response.ok) {
         socketService.joinGroup(room.id);
         console.log(`✅ Groupe rejoint: ${room.id}`);
         
         Alert.alert('Succès', `Vous avez rejoint "${room.name}"`);
         fetchData();
-      } else {
-        Alert.alert('Info', 'Vous êtes déjà membre de ce groupe');
       }
     } catch (error) {
       Alert.alert('Erreur', 'Impossible de rejoindre le groupe');
@@ -275,7 +313,7 @@ const ChatList = ({
   // Rendu conversation privée
   const renderPrivateItem = (chat) => {
     const time = chat.lastTimestamp 
-      ? new Date(chat.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      ? new Date(chat.lastTimestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : '';
 
     return (
@@ -291,7 +329,6 @@ const ChatList = ({
             source={{ uri: chat.avatar || `https://i.pravatar.cc/150?u=${chat.id}` }} 
             style={styles.avatar} 
           />
-          {/*  NOUVEAU: Indicateur en ligne */}
           {chat.is_online === 1 && (
             <View style={styles.onlineIndicator} />
           )}
@@ -373,17 +410,23 @@ const ChatList = ({
       </View>
 
       <ScrollView contentContainerStyle={styles.list}>
-        {activeTab === 'PRIVATE' && (
+        {loading && (
+          <Text style={styles.empty}>Chargement...</Text>
+        )}
+        
+        {!loading && activeTab === 'PRIVATE' && (
           filteredPrivate.length > 0 
             ? filteredPrivate.map(renderPrivateItem)
             : <Text style={styles.empty}>Aucune conversation privée</Text>
         )}
-        {activeTab === 'GROUPS' && (
+        
+        {!loading && activeTab === 'GROUPS' && (
           filteredGroups.length > 0
             ? filteredGroups.map(room => renderGroupItem(room))
             : <Text style={styles.empty}>Aucun groupe</Text>
         )}
-        {activeTab === 'DISCOVER' && (
+        
+        {!loading && activeTab === 'DISCOVER' && (
           filteredDiscover.length > 0
             ? filteredDiscover.map(room => renderGroupItem(room, true))
             : <Text style={styles.empty}>Aucun groupe public disponible</Text>
@@ -502,7 +545,6 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 25, marginBottom: 10, elevation: 1 },
   avatarContainer: { position: 'relative' },
   avatar: { width: 60, height: 60, borderRadius: 30 },
-  //  NOUVEAU: Style pour l'indicateur en ligne
   onlineIndicator: {
     position: 'absolute',
     bottom: 2,

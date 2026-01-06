@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -8,6 +7,7 @@ import {
   StyleSheet,
   Platform,
   TouchableOpacity,
+  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ChatList from './components/ChatList';
@@ -16,70 +16,111 @@ import ProfileView from './components/ProfileView';
 import ChatRoomView from './components/ChatRoomView';
 import ChatPrivateView from './components/ChatPrivateView';
 import socketService from './services/socketService';
-import * as SQLite from 'expo-sqlite';
+import { getUserGroups } from './services/api';
 
-const db = SQLite.openDatabaseSync('chatapp.db');
+interface MainAppProps {
+  me: {
+    id: string;
+    username: string;
+    email: string;
+    avatar?: string;
+    bio?: string;
+  };
+  onLogout: () => void;
+}
 
-export default function MainApp({ me, onLogout }: any) {
-  const [currentTab, setCurrentTab] = useState('CHATS');
+export default function MainApp({ me, onLogout }: MainAppProps) {
+  const [currentTab, setCurrentTab] = useState<'CHATS' | 'CONTACTS' | 'PROFILE'>('CHATS');
   const [activeRoom, setActiveRoom] = useState<any>(null);
   const [activePrivateChat, setActivePrivateChat] = useState<any>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [rooms, setRooms] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const fetchRooms = useCallback(() => {
+  /**
+   * 📡 Récupérer les groupes de l'utilisateur depuis l'API PostgreSQL
+   */
+  const fetchRooms = useCallback(async () => {
+    if (!me || !me.id) return;
+
     try {
-      const allRooms = db.getAllSync('SELECT * FROM groups ORDER BY lastUpdate DESC');
-      setRooms(allRooms);
-    } catch (e) {
-      console.error('Erreur chargement salons:', e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (me && me.id) {
-      console.log('Connexion Socket.io pour l\'utilisateur:', me.id);
+      console.log('📡 Chargement des groupes pour:', me.id);
       
-      // Connecter Socket.io
+      const response = await getUserGroups(me.id);
+      
+      if (response.success && response.groups) {
+        setRooms(response.groups);
+        console.log(`✅ ${response.groups.length} groupe(s) chargé(s)`);
+      } else {
+        console.warn('⚠️ Aucun groupe trouvé');
+        setRooms([]);
+      }
+    } catch (error) {
+      console.error('❌ Erreur chargement groupes:', error);
+      Alert.alert('Erreur', 'Impossible de charger les groupes');
+      setRooms([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [me]);
+
+  /**
+   * 🔌 Initialisation Socket.io et chargement des données
+   */
+  useEffect(() => {
+    if (!me || !me.id) {
+      console.error('❌ Aucun utilisateur connecté');
+      return;
+    }
+
+    console.log('🚀 Initialisation MainApp pour:', me.username);
+
+    // 🔌 Connexion Socket.io
+    try {
       socketService.connect(me.id);
       socketService.setUserOnline(me.id);
-
-      fetchRooms();
+      console.log('✅ Socket.io connecté');
+    } catch (error) {
+      console.error('❌ Erreur connexion Socket.io:', error);
+      Alert.alert(
+        'Erreur de connexion',
+        'Impossible de se connecter au serveur de chat en temps réel'
+      );
     }
 
-    // ✅ Nettoyage à la déconnexion
+    // 📡 Charger les groupes
+    fetchRooms();
+
+    // 🧹 Cleanup à la déconnexion
     return () => {
+      console.log('🧹 Nettoyage MainApp');
+      
       if (me && me.id) {
-        console.log('Déconnexion Socket.io pour l\'utilisateur:', me.id);
         socketService.setUserOffline(me.id);
+        socketService.removeAllListeners();
         socketService.disconnect();
       }
     };
   }, [me, fetchRooms]);
 
-  const handleCreateRoom = (newRoom: any) => {
-    try {
-      db.runSync(
-        'INSERT INTO groups (id, name, avatar, is_private, created_by, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)',
-        [
-          newRoom.id,
-          newRoom.name,
-          newRoom.avatar,
-          newRoom.is_private,
-          newRoom.created_by,
-          newRoom.lastUpdate,
-        ]
-      );
-      db.runSync(
-        'INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
-        [newRoom.id, me.id, 'admin']
-      );
-      fetchRooms();
-    } catch (e) {
-      console.error('Erreur création salon:', e);
+  /**
+   * 👥 Gérer la création d'un nouveau groupe
+   */
+  const handleCreateRoom = useCallback((newRoom: any) => {
+    console.log('➕ Nouveau groupe créé:', newRoom.name);
+    
+    // Recharger les groupes depuis l'API
+    fetchRooms();
+    
+    // Rejoindre le groupe via Socket.io
+    if (newRoom.id) {
+      socketService.joinGroup(newRoom.id.toString());
     }
-  };
+  }, [fetchRooms]);
 
+  /**
+   * 🎨 Thème de l'application
+   */
   const theme = {
     bg: isDarkMode ? '#0f172a' : '#f8fafc',
     tabBar: isDarkMode ? '#1e293b' : '#ffffff',
@@ -88,53 +129,96 @@ export default function MainApp({ me, onLogout }: any) {
     border: isDarkMode ? '#334155' : '#e2e8f0',
   };
 
+  /**
+   * 🖼️ Rendu du contenu selon l'onglet actif
+   */
   const renderContent = () => {
-    // Chat groupe ouvert
+    // 💬 Chat groupe ouvert
     if (activeRoom) {
       return (
         <ChatRoomView
           room={activeRoom}
           me={me}
           onBack={() => {
+            console.log('🔙 Retour depuis le chat de groupe');
+            socketService.leaveGroup(activeRoom.id.toString());
             setActiveRoom(null);
-            fetchRooms();
+            fetchRooms(); // Recharger les groupes
           }}
+          isDarkMode={isDarkMode}
         />
       );
     }
 
+    // 💬 Chat privé ouvert
     if (activePrivateChat) {
       return (
         <ChatPrivateView
           chatWith={activePrivateChat}
           me={me}
-          onBack={() => setActivePrivateChat(null)}
-          onBlockUser={() => setActivePrivateChat(null)}
+          onBack={() => {
+            console.log('🔙 Retour depuis le chat privé');
+            setActivePrivateChat(null);
+          }}
+          onBlockUser={() => {
+            console.log('🚫 Utilisateur bloqué');
+            setActivePrivateChat(null);
+          }}
+          isDarkMode={isDarkMode}
         />
       );
     }
 
-    // Onglets normaux
+    // 📑 Onglets principaux
     switch (currentTab) {
       case 'CHATS':
         return (
           <ChatList
             me={me}
-            onNavigate={setActiveRoom}
-            onOpenPrivateChat={setActivePrivateChat}
+            rooms={rooms}
+            onNavigate={(room) => {
+              console.log('📂 Ouverture du groupe:', room.name);
+              socketService.joinGroup(room.id.toString());
+              setActiveRoom(room);
+            }}
+            onOpenPrivateChat={(user) => {
+              console.log('💬 Ouverture chat privé avec:', user.username);
+              setActivePrivateChat(user);
+            }}
+            onCreateRoom={handleCreateRoom}
+            onRefresh={fetchRooms}
             isDarkMode={isDarkMode}
             onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+            loading={loading}
           />
         );
+        
       case 'CONTACTS':
         return (
           <ContactList
             me={me}
-            onStartChat={(user) => setActivePrivateChat(user)}
+            onStartChat={(user) => {
+              console.log('💬 Démarrage chat avec:', user.username);
+              setActivePrivateChat(user);
+            }}
+            isDarkMode={isDarkMode}
           />
         );
+        
       case 'PROFILE':
-        return <ProfileView userId={me.id} isDarkMode={isDarkMode} onLogout={onLogout} />;
+        return (
+          <ProfileView 
+            userId={me.id} 
+            isDarkMode={isDarkMode} 
+            onLogout={() => {
+              console.log('👋 Déconnexion demandée');
+              socketService.setUserOffline(me.id);
+              socketService.disconnect();
+              onLogout();
+            }} 
+          />
+        );
+        
       default:
         return null;
     }
@@ -142,12 +226,24 @@ export default function MainApp({ me, onLogout }: any) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <View style={styles.main}>{renderContent()}</View>
+      <StatusBar 
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'} 
+        backgroundColor={theme.bg}
+      />
+      
+      <View style={styles.main}>
+        {renderContent()}
+      </View>
 
-      {/* Tab bar visible seulement quand aucun chat n'est ouvert */}
+      {/* 📱 Barre de navigation visible seulement si aucun chat n'est ouvert */}
       {!activeRoom && !activePrivateChat && (
-        <View style={[styles.tabBar, { backgroundColor: theme.tabBar, borderTopColor: theme.border }]}>
+        <View style={[
+          styles.tabBar, 
+          { 
+            backgroundColor: theme.tabBar, 
+            borderTopColor: theme.border 
+          }
+        ]}>
           <TabButton
             label="Messages"
             icon="chatbubble-ellipses"
@@ -175,29 +271,69 @@ export default function MainApp({ me, onLogout }: any) {
   );
 }
 
-const TabButton = ({ label, icon, active, onPress, theme }: any) => (
-  <TouchableOpacity style={styles.tabItem} onPress={onPress} activeOpacity={0.7}>
+/**
+ * 🔘 Composant bouton de navigation
+ */
+interface TabButtonProps {
+  label: string;
+  icon: any;
+  active: boolean;
+  onPress: () => void;
+  theme: {
+    active: string;
+    inactive: string;
+  };
+}
+
+const TabButton: React.FC<TabButtonProps> = ({ label, icon, active, onPress, theme }) => (
+  <TouchableOpacity 
+    style={styles.tabItem} 
+    onPress={onPress} 
+    activeOpacity={0.7}
+  >
     <Ionicons
       name={active ? icon : `${icon}-outline`}
       size={24}
       color={active ? theme.active : theme.inactive}
     />
-    <Text style={[styles.tabLabel, { color: active ? theme.active : theme.inactive }]}>
+    <Text style={[
+      styles.tabLabel, 
+      { color: active ? theme.active : theme.inactive }
+    ]}>
       {label}
     </Text>
   </TouchableOpacity>
 );
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  main: { flex: 1 },
+  container: { 
+    flex: 1 
+  },
+  main: { 
+    flex: 1 
+  },
   tabBar: {
     flexDirection: 'row',
     height: Platform.OS === 'ios' ? 85 : 70,
     borderTopWidth: 1,
     paddingBottom: Platform.OS === 'ios' ? 20 : 10,
     alignItems: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4
   },
-  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  tabLabel: { fontSize: 10, fontWeight: 'bold', marginTop: 4 },
+  tabItem: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center',
+    paddingVertical: 8
+  },
+  tabLabel: { 
+    fontSize: 11, 
+    fontWeight: '600', 
+    marginTop: 4,
+    letterSpacing: 0.2
+  },
 });

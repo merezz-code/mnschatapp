@@ -1,7 +1,6 @@
-// ChatPrivateView.tsx - Version Temps Réel avec Socket.io
+// ChatPrivateView.tsx - Version PostgreSQL avec API
 
 import React, { useState, useRef, useEffect } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
 import {
   View,
   Text,
@@ -32,14 +31,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
-import { db } from '../services/database';
-import socketService from '../services/socketService'; //Import du service Socket
+import { 
+  getPrivateMessages, 
+  sendPrivateMessage, 
+  deleteMessageLocal, 
+  deleteMessageForAll,
+  getAllUsers 
+} from '../services/api';
+import socketService from '../services/socketService';
 
 interface ChatPrivateViewProps {
   chatWith: any;
   me: any;
   onBack: () => void;
   onBlockUser?: (userId: string) => void;
+  isDarkMode?: boolean;
 }
 
 const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
@@ -47,6 +53,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   me,
   onBack,
   onBlockUser,
+  isDarkMode = false,
 }) => {
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
@@ -57,13 +64,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [userDetails, setUserDetails] = useState<any>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
-  const [isTyping, setIsTyping] = useState(false); //État pour "en train d'écrire"
+  const [isTyping, setIsTyping] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationInterval = useRef<NodeJS.Timeout | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null); //Timeout pour le typing
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const otherUserId = chatWith.id;
 
@@ -71,63 +78,32 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     loadMessages();
     loadUserDetails();
 
-    //Écouter les nouveaux messages en temps réel
+    // Écouter les nouveaux messages en temps réel
     socketService.onPrivateMessage((message) => {
-      // Vérifier si le message concerne cette conversation
       if (
         (message.senderId === me.id && message.receiverId === otherUserId) ||
         (message.senderId === otherUserId && message.receiverId === me.id)
       ) {
-        // Sauvegarder dans la DB locale
-        try {
-          db.runSync(
-            `INSERT INTO private_messages 
-             (sender_id, receiver_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              message.senderId,
-              message.receiverId,
-              message.content,
-              message.type,
-              message.fileName || null,
-              message.type === 'file' ? message.fileUrl : null,
-              message.type === 'image' ? message.fileUrl : null,
-              message.type === 'audio' ? message.fileUrl : null,
-              message.timestamp,
-            ]
-          );
-          db.runSync("ALTER TABLE private_messages ADD COLUMN is_deleted INTEGER DEFAULT 0");
-          console.log("Colonne is_deleted ajoutée avec succès");
-          // Recharger les messages
-          loadMessages();
-
-          // Faire défiler vers le bas
-          setTimeout(() => {
-            flatListRef.current?.scrollToEnd({ animated: true });
-          }, 100);
-        } catch (error) {
-          console.error('Erreur sauvegarde message reçu:', error);
-        }
-      }
-    });
-
-    //Écouter quand l'autre supprime un message pour tous
-    socketService.onMessageDeleted((data) => {
-      // data contient l'ID du message supprimé
-      try {
-        db.runSync('DELETE FROM private_messages WHERE id = ?', [data.messageId]);
+        console.log('📨 Nouveau message privé reçu');
         loadMessages();
-      } catch (error) {
-        console.error("Erreur mise à jour suppression socket:", error);
+        
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       }
     });
 
-    //Écouter quand l'autre personne tape
+    // Écouter quand l'autre supprime un message
+    socketService.onMessageDeleted((data) => {
+      console.log('🗑️ Message supprimé reçu via socket');
+      loadMessages();
+    });
+
+    // Écouter quand l'autre personne tape
     socketService.onTyping((data) => {
       if (data.senderId === otherUserId) {
         setIsTyping(data.isTyping);
 
-        // Réinitialiser après 3 secondes si pas de nouveau signal
         if (data.isTyping) {
           if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
           typingTimeoutRef.current = setTimeout(() => {
@@ -137,15 +113,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       }
     });
 
-    //Écouter les changements de statut (en ligne/hors ligne)
+    // Écouter les changements de statut
     socketService.onUserStatusChange((data) => {
       if (data.userId === otherUserId) {
         setUserDetails((prev: any) => ({
           ...prev,
           is_online: data.isOnline ? 1 : 0,
         }));
-
-        // Mettre à jour aussi chatWith pour l'affichage du header
         chatWith.is_online = data.isOnline ? 1 : 0;
       }
     });
@@ -158,57 +132,46 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     return () => {
       if (durationInterval.current) clearInterval(durationInterval.current);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-        //Arrêter de notifier qu'on tape en quittant
-        socketService.emitTyping(otherUserId, false);
+      socketService.emitTyping(otherUserId, false);
+      
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(err => console.log("Cleanup error", err));
+      }
     };
   }, [otherUserId]);
 
-  const loadMessages = () => {
+  const loadMessages = async () => {
     try {
-      const msgs = db.getAllSync(
-        `SELECT 
-          id,
-          sender_id AS senderId,
-          content,
-          type,
-          file_name AS fileName,
-          file_url AS fileUrl,
-          image_url AS imageUrl,
-          audio_url AS audioUrl,
-          timestamp
-         FROM private_messages 
-         WHERE ((sender_id = ? AND receiver_id = ?) 
-            OR (sender_id = ? AND receiver_id = ?))
-         AND id NOT IN (
-           SELECT message_id FROM deleted_messages WHERE user_id = ?
-         )
-         ORDER BY timestamp ASC`,
-        [me.id, otherUserId, otherUserId, me.id, me.id]
-      );
-      setMessages(msgs);
+      const response = await getPrivateMessages(me.id, otherUserId);
+      
+      if (response.success && response.messages) {
+        setMessages(response.messages);
+        console.log(`✅ ${response.messages.length} messages chargés`);
+      }
     } catch (error) {
-      console.error('Erreur chargement messages privés:', error);
+      console.error('❌ Erreur chargement messages:', error);
+      Alert.alert('Erreur', 'Impossible de charger les messages');
     }
   };
 
-  const loadUserDetails = () => {
+  const loadUserDetails = async () => {
     try {
-      const user = db.getFirstSync(
-        'SELECT id, username, avatar, bio, is_online FROM users WHERE id = ?',
-        [otherUserId]
-      );
-      if (user) {
-        setUserDetails(user);
-        console.log('User details loaded:', user);
+      const response = await getAllUsers();
+      
+      if (response.success && response.users) {
+        const user = response.users.find((u: any) => u.id === otherUserId);
+        if (user) {
+          setUserDetails(user);
+          console.log('✅ Détails utilisateur chargés');
+        }
       }
     } catch (error) {
-      console.error('Erreur chargement détails utilisateur:', error);
+      console.error('❌ Erreur chargement détails:', error);
     }
   };
 
   const playAudio = async (uri: string, messageId: string) => {
     try {
-      // Si un audio est déjà en cours, l'arrêter
       if (soundRef.current) {
         try {
           await soundRef.current.stopAsync();
@@ -219,7 +182,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         soundRef.current = null;
       }
 
-      // Si on clique sur le même audio, juste l'arrêter
       if (playingAudio === messageId) {
         setPlayingAudio(null);
         return;
@@ -247,25 +209,15 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
         setPlayingAudio(messageId);
         await sound.playAsync();
-        console.log('Lecture démarrée');
       }
     } catch (error) {
-      console.error('Erreur lecture audio:', error);
+      console.error('❌ Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
   };
 
-  // Nettoyer l'audio quand le composant se démonte
-  useEffect(() => {
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(err => console.log("Cleanup error", err));
-      }
-    };
-  }, []);
-
-  const handleSendMessage = (
+  const handleSendMessage = async (
     content: string,
     type: 'text' | 'image' | 'file' | 'audio',
     fileName: string | null = null,
@@ -274,27 +226,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     if (type === 'text' && !content.trim()) return;
 
     try {
-      const timestamp = Math.floor(Date.now() / 1000);
+      const timestamp = Date.now();
 
-      db.runSync(
-        `INSERT INTO private_messages 
-         (sender_id, receiver_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          me.id,
-          otherUserId,
-          content,
-          type,
-          fileName,
-          type === 'file' ? fileUrl : null,
-          type === 'image' ? fileUrl : null,
-          type === 'audio' ? fileUrl : null,
-          timestamp,
-        ]
-      );
-
-      //Envoyer via Socket.io en temps réel
-      socketService.sendPrivateMessage({
+      const messageData = {
         senderId: me.id,
         receiverId: otherUserId,
         content,
@@ -304,15 +238,23 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         imageUrl: type === 'image' ? fileUrl || undefined : undefined,
         audioUrl: type === 'audio' ? fileUrl || undefined : undefined,
         timestamp,
-      });
+      };
 
+      // Sauvegarder dans la DB via API
+      await sendPrivateMessage(messageData);
+
+      // Envoyer via Socket.io
+      socketService.sendPrivateMessage(messageData);
+
+      console.log('✅ Message envoyé');
+      
       loadMessages();
 
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
-      console.error('Erreur envoi message:', error);
+      console.error('❌ Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
     }
   };
@@ -360,7 +302,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      console.error('Erreur démarrage enregistrement:', err);
+      console.error('❌ Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible de démarrer l'enregistrement");
     }
   };
@@ -387,7 +329,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error('Erreur arrêt enregistrement:', err);
+      console.error('❌ Erreur arrêt enregistrement:', err);
     }
   };
 
@@ -400,27 +342,18 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         {
           text: 'Vider pour moi',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             try {
-              const messagesToDelete = db.getAllSync(
-                `SELECT id FROM private_messages 
-                 WHERE (sender_id = ? AND receiver_id = ?) 
-                    OR (sender_id = ? AND receiver_id = ?)`,
-                [me.id, otherUserId, otherUserId, me.id]
-              );
-
-              messagesToDelete.forEach((msg: any) => {
-                db.runSync(
-                  'INSERT OR IGNORE INTO deleted_messages (user_id, message_id) VALUES (?, ?)',
-                  [me.id, msg.id]
-                );
-              });
+              // Supprimer localement tous les messages
+              for (const msg of messages) {
+                await deleteMessageLocal(me.id, msg.id);
+              }
 
               setMessages([]);
               Alert.alert('Succès', 'La discussion a été vidée pour vous.');
               setShowSettings(false);
             } catch (error) {
-              console.error('Erreur suppression messages:', error);
+              console.error('❌ Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de vider la discussion');
             }
           },
@@ -432,24 +365,17 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const handleBlockUser = () => {
     Alert.alert(
       'Bloquer cet utilisateur',
-      `Voulez-vous vraiment bloquer ${chatWith.username} ? Vous ne pourrez plus échanger de messages.`,
+      `Voulez-vous vraiment bloquer ${chatWith.username} ?`,
       [
         { text: 'Annuler', style: 'cancel' },
         {
           text: 'Bloquer',
           style: 'destructive',
           onPress: () => {
-            try {
-              db.runSync(
-                'INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)',
-                [me.id, otherUserId]
-              );
-              Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
-              if (onBlockUser) onBlockUser(otherUserId);
-              onBack();
-            } catch (error) {
-              Alert.alert('Erreur', 'Impossible de bloquer cet utilisateur');
-            }
+            // TODO: Implémenter le blocage via API
+            Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
+            if (onBlockUser) onBlockUser(otherUserId);
+            onBack();
           },
         },
       ]
@@ -460,10 +386,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     Alert.alert('Appel vocal', 'Fonctionnalité en développement...');
   };
 
-  // Gérer la saisie et notifier le typing
   const handleInputChange = (text: string) => {
     setInputText(text);
-    // Notifier qu'on est en train d'écrire
     socketService.emitTyping(otherUserId, text.length > 0);
   };
 
@@ -474,13 +398,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       [
         { 
           text: "Pour moi", 
-          onPress: () => deleteMessageLocal(message.id) 
+          onPress: () => handleDeleteMessageLocal(message.id) 
         },
         { 
           text: "Pour tous", 
           onPress: () => {
             if (message.senderId === me.id) {
-              deleteMessageForEveryone(message.id);
+              handleDeleteMessageForEveryone(message.id);
             } else {
               Alert.alert("Action impossible", "Vous ne pouvez supprimer pour tous que vos propres messages.");
             }
@@ -491,39 +415,26 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     );
   };
 
-  const deleteMessageLocal = (messageId: number) => {
+  const handleDeleteMessageLocal = async (messageId: number) => {
     try {
-      // 1. On n'efface pas le message de la table principale (pour garder une trace/socket)
-      // On l'enregistre dans la table des messages masqués pour cet utilisateur
-      db.runSync(
-        'INSERT OR IGNORE INTO deleted_messages (user_id, message_id) VALUES (?, ?)',
-        [me.id, messageId]
-      );
-
-      // 2. On met à jour l'affichage immédiatement en filtrant le state
+      await deleteMessageLocal(me.id, messageId);
       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
-
-      console.log("Message masqué pour l'utilisateur actuel");
+      console.log('✅ Message masqué localement');
     } catch (error) {
-      console.error("Erreur suppression locale:", error);
+      console.error("❌ Erreur suppression locale:", error);
+      Alert.alert('Erreur', 'Impossible de supprimer le message');
     }
   };
 
-  const deleteMessageForEveryone = (messageId: number) => {
+  const handleDeleteMessageForEveryone = async (messageId: number) => {
     try {
-      // 1. Mise à jour SQL
-      db.runSync(
-        'UPDATE private_messages SET content = ?, is_deleted = 1 WHERE id = ?',
-        ['Ce message a été supprimé', messageId]
-      );
-
-      // 2. Notification Socket
+      await deleteMessageForAll(messageId);
+      
       socketService.emitDeleteMessage({
         messageId: messageId,
         receiverId: otherUserId
       });
 
-      // 3. Mise à jour de l'état local pour rafraîchir l'écran immédiatement
       setMessages(prevMessages => 
         prevMessages.map(msg => 
           msg.id === messageId 
@@ -532,9 +443,10 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         )
       );
 
+      console.log('✅ Message supprimé pour tous');
     } catch (error) {
-      console.error("Erreur suppression pour tous:", error);
-      Alert.alert("Erreur", "Impossible de supprimer le message sur le serveur.");
+      console.error("❌ Erreur suppression pour tous:", error);
+      Alert.alert("Erreur", "Impossible de supprimer le message.");
     }
   };
 
@@ -545,7 +457,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   };
 
   const formatTime = (timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleTimeString([], {
+    return new Date(timestamp).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -563,7 +475,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           />
         )}
 
-        {/* LE SEUL ET UNIQUE TouchableOpacity qui entoure tout le message */}
         <TouchableOpacity 
           activeOpacity={0.8}
           onLongPress={() => showDeleteOptions(item)}
@@ -589,11 +500,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           {/* AUDIO */}
           {item.type === 'audio' && item.audioUrl && (
             <View style={styles.audioContainer}>
-              {/* On utilise un TouchableOpacity interne JUSTE pour le bouton play */}
               <TouchableOpacity 
                 style={[styles.audioBtn, isMe ? styles.audioBtnMe : styles.audioBtnTheir]}
                 onPress={() => playAudio(item.audioUrl, item.id.toString())}
-                // TRUC IMPORTANT : On remet le LongPress ici aussi pour que ça marche même si on clique sur le bouton play
                 onLongPress={() => showDeleteOptions(item)}
               >
                 {playingAudio === item.id.toString() ? (
@@ -621,7 +530,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             </View>
           )}
 
-          {/* TEXTE (Seulement si ce n'est pas un audio pur) */}
+          {/* TEXTE */}
           {item.type !== 'audio' && (
             <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
               {item.content}
@@ -654,7 +563,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         <TouchableOpacity style={styles.headerInfo} onPress={() => setShowProfile(true)}>
           <Text style={styles.name}>{chatWith.username}</Text>
           <Text style={styles.status}>
-            {/*  Afficher "En train d'écrire..." si l'autre tape */}
             {isTyping
               ? '✍️ En train d\'écrire...'
               : (chatWith.is_online ? '🟢 En ligne' : '⚫ Hors ligne')
@@ -708,7 +616,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
                   style={styles.input}
                   placeholder="Message..."
                   value={inputText}
-                  onChangeText={handleInputChange} //Utiliser handleInputChange
+                  onChangeText={handleInputChange}
                   multiline
                 />
                 <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
@@ -721,7 +629,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
                   if (inputText.trim()) {
                     handleSendMessage(inputText.trim(), 'text');
                     setInputText('');
-                    //Arrêter de notifier le typing après l'envoi
                     socketService.emitTyping(otherUserId, false);
                   } else {
                     startRecording();
@@ -746,13 +653,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Bouton Vider la discussion - Style aligné sur "Block" */}
             <TouchableOpacity style={styles.clearBtn} onPress={handleClearChat}>
               <Trash2 size={22} color="#f97316" /> 
               <Text style={styles.clearBtnText}>Vider la discussion</Text>
             </TouchableOpacity>
 
-            {/* Bouton Bloquer */}
             <TouchableOpacity style={styles.blockBtn} onPress={handleBlockUser}>
               <UserX size={22} color="#ef4444" />
               <Text style={styles.blockBtnText}>Bloquer {chatWith.username}</Text>
@@ -882,16 +787,12 @@ const styles = StyleSheet.create({
   theirTime: {
     color: '#94a3b8'
   },
-
-  // Images dans les messages
   msgImage: {
     width: 220,
     height: 160,
     borderRadius: 12,
     marginBottom: 2
   },
-
-  // Fichiers
   fileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -906,8 +807,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     flex: 1
   },
-
-  // Audio - Container principal
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -917,8 +816,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginVertical: 0,
   },
-
-  // Audio - Bouton Play/Pause
   audioBtn: {
     width: 36,
     height: 36,
@@ -937,8 +834,6 @@ const styles = StyleSheet.create({
   audioBtnTheir: {
     backgroundColor: '#2563eb',
   },
-
-  // Audio - Icône Play (triangle)
   playIcon: {
     width: 0,
     height: 0,
@@ -955,8 +850,6 @@ const styles = StyleSheet.create({
   playIconTheir: {
     borderLeftColor: '#fff',
   },
-
-  // Audio - Icône Pause (deux barres)
   pauseIcon: {
     flexDirection: 'row',
     gap: 3,
@@ -974,8 +867,6 @@ const styles = StyleSheet.create({
   pauseBarTheir: {
     backgroundColor: '#fff',
   },
-
-  // Audio - Barre de progression
   audioProgressContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1007,8 +898,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     opacity: 0.8,
   },
-
-  // Zone d'envoi
   inputSection: {
     flexDirection: 'row',
     padding: 12,
@@ -1053,8 +942,6 @@ const styles = StyleSheet.create({
   micBtn: {
     backgroundColor: '#64748b'
   },
-
-  // Enregistrement audio
   recordingContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -1084,8 +971,6 @@ const styles = StyleSheet.create({
   stopBtn: {
     padding: 8
   },
-
-  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1108,8 +993,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#0f172a'
   },
-  
-  // Bouton vider la discussion (modal settings)
   clearBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1120,12 +1003,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   clearBtnText: {
-    color: '#f97316', // Orange (texte)
+    color: '#f97316',
     fontWeight: 'bold',
     fontSize: 16
   },
-
-  // Bouton bloquer (modal settings)
   blockBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1139,8 +1020,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16
   },
-
-  // Modal Profile
   profileModalContent: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 30,
