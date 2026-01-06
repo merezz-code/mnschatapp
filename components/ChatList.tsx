@@ -7,6 +7,7 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { RoomType } from '../types';
 import socketService from '../services/socketService';
 import { getUserGroups, createGroup, getAllUsers, getPrivateChats, getPrivateMessages } from '../services/api';
+import { API_URL } from '../config/api';
 
 const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkMode }) => {
   const [rooms, setRooms] = useState<any[]>([]);
@@ -29,7 +30,7 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
         const roomsWithMembers = await Promise.all(
           groupsResponse.groups.map(async (room) => {
             try {
-              const membersResponse = await fetch(`http://192.168.1.7:3000/api/groups/${room.id}/members`);
+              const membersResponse = await fetch(`${API_URL}/groups/${room.id}/members`);
               const membersData = await membersResponse.json();
               if (membersData.success) {
                 const memberIds = membersData.members.map((m: any) => m.id);
@@ -87,7 +88,7 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
         setPrivateChats(filtered);
       }
 
-      const publicRes = await fetch('http://192.168.1.7:3000/api/groupes');
+      const publicRes = await fetch(`${API_URL}/groupes`);
       if (publicRes.ok) {
         const data = await publicRes.json();
         if (data.success) setPublicGroups(data.groups);
@@ -101,7 +102,7 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
   };
   const fetchPublicGroups = async () => {
   try {
-    const res = await fetch('http://192.168.1.7:3000/api/groupes');
+    const res = await fetch(`${API_URL}/groupes`);
     if (!res.ok) {
       console.error('Erreur HTTP:', res.status);
       return;
@@ -177,7 +178,7 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
 
   const handleJoinRoom = async (room) => {
     try {
-      const res = await fetch(`http://192.168.1.7:3000/api/groups/${room.id}/members`, {
+      const res = await fetch(`${API_URL}/groups/${room.id}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: me.id, role: 'member' })
