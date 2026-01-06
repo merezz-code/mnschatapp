@@ -28,6 +28,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
 import { 
   getPrivateMessages, 
@@ -64,9 +65,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
   const [isTyping, setIsTyping] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   
-  //Initialisation du statut (gérer les types number et boolean)
   const [isUserOnline, setIsUserOnline] = useState<boolean>(
     chatWith.is_online === 1 || chatWith.is_online === true
   );
@@ -79,16 +80,15 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const otherUserId = chatWith.id;
 
   useEffect(() => {
+    console.log(`ChatPrivateView monté - Statut initial de ${chatWith.username}: ${chatWith.is_online}`);
     loadMessages();
     loadUserDetails();
 
-    //Vérifier le statut en temps réel via socket
     socketService.checkUserStatus(otherUserId, (data) => {
       console.log(`🔍 Statut reçu du serveur:`, data);
       setIsUserOnline(data.isOnline);
     });
 
-    // Écouter les nouveaux messages en temps réel
     socketService.onPrivateMessage((message) => {
       if (
         (message.senderId === me.id && message.receiverId === otherUserId) ||
@@ -103,13 +103,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       }
     });
 
-    // Écouter quand l'autre supprime un message
     socketService.onMessageDeleted((data) => {
       console.log('🗑️ Message supprimé reçu via socket');
       loadMessages();
     });
 
-    // Écouter quand l'autre personne tape
     socketService.onTyping((data) => {
       if (data.senderId === otherUserId) {
         setIsTyping(data.isTyping);
@@ -123,17 +121,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       }
     });
 
-    // Écouter les changements de statut
     socketService.onUserStatusChange((data) => {
-      console.log('user_status_changed reçu:', data);
+      console.log('📡 user_status_changed reçu:', data);
       
       if (data.userId === otherUserId || data.userId === otherUserId.toString()) {
-        const newStatus = data.isOnline === true || data.isOnline === 1;
-       
-        // Mettre à jour le state local
+        const newStatus = Boolean(data.isOnline);     
         setIsUserOnline(newStatus);
         
-        // Aussi mettre à jour userDetails si il existe
         setUserDetails((prev: any) => {
           if (prev) {
             return {
@@ -171,10 +165,10 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       
       if (response.success && response.messages) {
         setMessages(response.messages);
-        console.log(`${response.messages.length} messages chargés`);
+        console.log(` ${response.messages.length} messages chargés`);
       }
     } catch (error) {
-      console.error('Erreur chargement messages:', error);
+      console.error('❌ Erreur chargement messages:', error);
       Alert.alert('Erreur', 'Impossible de charger les messages');
     }
   };
@@ -188,16 +182,49 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         if (user) {
           setUserDetails(user);
           
-          // Mettre à jour le statut avec la valeur de la DB
           const onlineStatus = user.is_online === 1 || user.is_online === true;
           setIsUserOnline(onlineStatus);
           chatWith.is_online = user.is_online;
           
-          console.log(`Détails utilisateur chargés - Statut: ${onlineStatus ? '🟢 EN LIGNE' : '⚫ HORS LIGNE'}`);
+          console.log(` Détails utilisateur chargés - Statut: ${onlineStatus ? '🟢 EN LIGNE' : '⚫ HORS LIGNE'}`);
         }
       }
     } catch (error) {
       console.error('Erreur chargement détails:', error);
+    }
+  };
+
+  //  UPLOAD fichier vers un serveur (imgbb.com gratuit)
+  const uploadFile = async (uri: string, type: 'image' | 'audio'): Promise<string | null> => {
+    try {
+      setIsUploading(true);
+      
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const formData = new FormData();
+      formData.append('image', base64);
+
+      const response = await fetch('https://api.imgbb.com/1/upload?key=YOUR_API_KEY', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log(' Fichier uploadé:', data.data.url);
+        return data.data.url;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Erreur upload:', error);
+      Alert.alert('Erreur', "Impossible d'uploader le fichier");
+      return null;
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -208,13 +235,19 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           await soundRef.current.stopAsync();
           await soundRef.current.unloadAsync();
         } catch (e) {
-          // Ignorer si déjà déchargé
+          // Ignorer
         }
         soundRef.current = null;
       }
 
       if (playingAudio === messageId) {
         setPlayingAudio(null);
+        return;
+      }
+
+      //  Vérifier si l'URL est valide
+      if (!uri || uri === 'null' || uri === 'undefined') {
+        Alert.alert('Erreur', 'Fichier audio non disponible');
         return;
       }
 
@@ -242,7 +275,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         await sound.playAsync();
       }
     } catch (error) {
-      console.error(' Erreur lecture audio:', error);
+      console.error('❌ Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
@@ -271,10 +304,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         timestamp,
       };
 
-      // Sauvegarder dans la DB via API
       await sendPrivateMessage(messageData);
-
-      // Envoyer via Socket.io
       socketService.sendPrivateMessage(messageData);
 
       console.log(' Message envoyé');
@@ -285,7 +315,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
-      console.error(' Erreur envoi message:', error);
+      console.error('❌ Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
     }
   };
@@ -296,12 +326,18 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       Alert.alert('Permission refusée', 'Accès aux photos nécessaire.');
       return;
     }
+    
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.7,
     });
+    
     if (!result.canceled && result.assets[0]) {
-      handleSendMessage('📷 Image', 'image', 'photo.jpg', result.assets[0].uri);
+      const uploadedUrl = await uploadFile(result.assets[0].uri, 'image');
+      
+      if (uploadedUrl) {
+        handleSendMessage('📷 Image', 'image', 'photo.jpg', uploadedUrl);
+      }
     }
   };
 
@@ -309,6 +345,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*' });
     if (!result.canceled && result.assets) {
       const file = result.assets[0];
+      
+      // Pour les documents, vous pouvez utiliser un autre service d'upload
       handleSendMessage(`📎 ${file.name}`, 'file', file.name, file.uri);
     }
   };
@@ -333,7 +371,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      console.error(' Erreur enregistrement:', err);
+      console.error('❌ Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible de démarrer l'enregistrement");
     }
   };
@@ -349,18 +387,22 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       const uri = recordingRef.current.getURI();
 
       if (uri) {
-        handleSendMessage(
-          `🎤 Message vocal (${recordingDuration}s)`,
-          'audio',
-          `audio_${Date.now()}.m4a`,
-          uri
-        );
+        const uploadedUrl = await uploadFile(uri, 'audio');
+        
+        if (uploadedUrl) {
+          handleSendMessage(
+            `🎤 Message vocal (${recordingDuration}s)`,
+            'audio',
+            `audio_${Date.now()}.m4a`,
+            uploadedUrl
+          );
+        }
       }
 
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error(' Erreur arrêt enregistrement:', err);
+      console.error('❌ Erreur arrêt enregistrement:', err);
     }
   };
 
@@ -375,7 +417,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           style: 'destructive',
           onPress: async () => {
             try {
-              // Supprimer localement tous les messages
               for (const msg of messages) {
                 await deleteMessageLocal(me.id, msg.id);
               }
@@ -384,7 +425,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               Alert.alert('Succès', 'La discussion a été vidée pour vous.');
               setShowSettings(false);
             } catch (error) {
-              console.error(' Erreur suppression:', error);
+              console.error('❌ Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de vider la discussion');
             }
           },
@@ -403,7 +444,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           text: 'Bloquer',
           style: 'destructive',
           onPress: () => {
-            // TODO: Implémenter le blocage via API
             Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
             if (onBlockUser) onBlockUser(otherUserId);
             onBack();
@@ -452,7 +492,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
       console.log(' Message masqué localement');
     } catch (error) {
-      console.error(" Erreur suppression locale:", error);
+      console.error("❌ Erreur suppression locale:", error);
       Alert.alert('Erreur', 'Impossible de supprimer le message');
     }
   };
@@ -476,7 +516,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
       console.log(' Message supprimé pour tous');
     } catch (error) {
-      console.error(" Erreur suppression pour tous:", error);
+      console.error("❌ Erreur suppression pour tous:", error);
       Alert.alert("Erreur", "Impossible de supprimer le message.");
     }
   };
@@ -487,11 +527,21 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  //  CORRECTION: Gérer les timestamps invalides
   const formatTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    if (!timestamp || isNaN(timestamp) || timestamp <= 0) {
+      return '';
+    }
+    
+    try {
+      return new Date(timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch (error) {
+      console.error('❌ Erreur formatTime:', error);
+      return '';
+    }
   };
 
   const renderMessage = ({ item }: { item: any }) => {
@@ -568,9 +618,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             </Text>
           )}
 
-          <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
-            {formatTime(item.timestamp)}
-          </Text>
+          {formatTime(item.timestamp) && (
+            <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
+              {formatTime(item.timestamp)}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
     );
@@ -578,7 +630,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <ArrowLeft size={24} color="#0f172a" />
@@ -609,7 +660,12 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Liste des messages */}
+      {isUploading && (
+        <View style={styles.uploadingBanner}>
+          <Text style={styles.uploadingText}>⏳ Upload en cours...</Text>
+        </View>
+      )}
+
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -619,7 +675,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
 
-      {/* Zone d'envoi */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
@@ -673,7 +728,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         </View>
       </KeyboardAvoidingView>
 
-      {/* Modal Settings */}
+      {/* Modals restent identiques... */}
       <Modal visible={showSettings} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -697,7 +752,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         </View>
       </Modal>
 
-      {/* Modal Profile */}
       <Modal visible={showProfile} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.profileModalContent}>
@@ -772,6 +826,15 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
+  uploadingBanner: {
+    backgroundColor: '#fef3c7',
+    padding: 10,
+    alignItems: 'center',
+  },
+  uploadingText: {
+    color: '#92400e',
+    fontWeight: '600',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -811,19 +874,9 @@ const styles = StyleSheet.create({
   myText: { color: '#fff' },
   theirText: { color: '#0f172a' },
   msgTime: { fontSize: 10, marginTop: 6, fontWeight: '500' },
-  myTime: {
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'right'
-  },
-  theirTime: {
-    color: '#94a3b8'
-  },
-  msgImage: {
-    width: 220,
-    height: 160,
-    borderRadius: 12,
-    marginBottom: 2
-  },
+  myTime: { color: 'rgba(255,255,255,0.8)', textAlign: 'right' },
+  theirTime: { color: '#94a3b8' },
+  msgImage: { width: 220, height: 160, borderRadius: 12, marginBottom: 2 },
   fileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -833,11 +886,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.05)',
     borderRadius: 10,
   },
-  fileText: {
-    fontSize: 13,
-    fontWeight: '500',
-    flex: 1
-  },
+  fileText: { fontSize: 13, fontWeight: '500', flex: 1 },
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -859,12 +908,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
   },
-  audioBtnMe: {
-    backgroundColor: '#fff',
-  },
-  audioBtnTheir: {
-    backgroundColor: '#2563eb',
-  },
+  audioBtnMe: { backgroundColor: '#fff' },
+  audioBtnTheir: { backgroundColor: '#2563eb' },
   playIcon: {
     width: 0,
     height: 0,
@@ -875,29 +920,17 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     marginLeft: 3,
   },
-  playIconMe: {
-    borderLeftColor: '#2563eb',
-  },
-  playIconTheir: {
-    borderLeftColor: '#fff',
-  },
+  playIconMe: { borderLeftColor: '#2563eb' },
+  playIconTheir: { borderLeftColor: '#fff' },
   pauseIcon: {
     flexDirection: 'row',
     gap: 3,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pauseBar: {
-    width: 3,
-    height: 14,
-    borderRadius: 1.5,
-  },
-  pauseBarMe: {
-    backgroundColor: '#2563eb',
-  },
-  pauseBarTheir: {
-    backgroundColor: '#fff',
-  },
+  pauseBar: { width: 3, height: 14, borderRadius: 1.5 },
+  pauseBarMe: { backgroundColor: '#2563eb' },
+  pauseBarTheir: { backgroundColor: '#fff' },
   audioProgressContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -908,22 +941,14 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     width: '100%',
   },
-  audioProgressBarMe: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
-  },
-  audioProgressBarTheir: {
-    backgroundColor: '#e2e8f0',
-  },
+  audioProgressBarMe: { backgroundColor: 'rgba(255,255,255,0.3)' },
+  audioProgressBarTheir: { backgroundColor: '#e2e8f0' },
   audioProgressFill: {
     height: '100%',
     borderRadius: 2,
   },
-  audioProgressFillMe: {
-    backgroundColor: '#fff',
-  },
-  audioProgressFillTheir: {
-    backgroundColor: '#2563eb',
-  },
+  audioProgressFillMe: { backgroundColor: '#fff' },
+  audioProgressFillTheir: { backgroundColor: '#2563eb' },
   audioDuration: {
     fontSize: 10,
     fontWeight: '600',
@@ -953,9 +978,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     maxHeight: 100,
   },
-  attachBtn: {
-    padding: 8
-  },
+  attachBtn: { padding: 8 },
   sendBtn: {
     width: 48,
     height: 48,
@@ -970,9 +993,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  micBtn: {
-    backgroundColor: '#64748b'
-  },
+  micBtn: { backgroundColor: '#64748b' },
   recordingContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -999,9 +1020,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ef4444'
   },
-  stopBtn: {
-    padding: 8
-  },
+  stopBtn: { padding: 8 },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

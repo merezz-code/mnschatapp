@@ -25,13 +25,13 @@ export default function App() {
       console.log(data);
       
       if (data.status === 'OK') {
-        console.log('✅ Connexion au serveur réussie:', data.message);
+        console.log('Connexion au serveur réussie:', data.message);
       } else {
-        console.warn('⚠️ Serveur accessible mais réponse inattendue');
+        console.warn('Serveur accessible mais réponse inattendue');
       }
     } catch (error) {
-      console.error('❌ Impossible de se connecter au serveur:', error.message);
-      console.log('💡 Vérifiez que le serveur est démarré: cd chat-server && node server.js');
+      console.error(' Impossible de se connecter au serveur:', error.message);
+      console.log('Vérifiez que le serveur est démarré: cd chat-server && node server.js');
     }
   };
 

@@ -276,7 +276,7 @@ const ChatList = ({
       if (response.success) {
         // Rejoindre le groupe Socket.io automatiquement
         socketService.joinGroup(response.group.id);
-        console.log(`✅ Groupe créé et rejoint: ${response.group.id}`);
+        console.log(`Groupe créé et rejoint: ${response.group.id}`);
 
         fetchData();
         setIsModalOpen(false);
@@ -300,7 +300,7 @@ const ChatList = ({
 
       if (response.ok) {
         socketService.joinGroup(room.id);
-        console.log(`✅ Groupe rejoint: ${room.id}`);
+        console.log(`Groupe rejoint: ${room.id}`);
         
         Alert.alert('Succès', `Vous avez rejoint "${room.name}"`);
         fetchData();

@@ -9,7 +9,7 @@ router.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     
-    console.log('📝 Inscription reçue:', { username, email, passwordLength: password?.length });
+    console.log('Inscription reçue:', { username, email, passwordLength: password?.length });
     
     if (!username || !email || !password) {
       return res.status(400).json({ 
@@ -41,11 +41,11 @@ router.post('/auth/register', async (req, res) => {
       [userId, username, email, password, avatar, 'Disponible']
     );
     
-    console.log('✅ Utilisateur créé:', result.rows[0].id);
+    console.log('Utilisateur créé:', result.rows[0].id);
     
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
-    console.error('❌ Erreur inscription:', error);
+    console.error(' Erreur inscription:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -55,7 +55,7 @@ router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    console.log('🔑 Connexion tentée:', { email });
+    console.log('Connexion tentée:', { email });
     
     if (!email || !password) {
       return res.status(400).json({ 
@@ -71,18 +71,18 @@ router.post('/auth/login', async (req, res) => {
     );
     
     if (result.rows.length === 0) {
-      console.log('❌ Identifiants invalides pour:', email);
+      console.log(' Identifiants invalides pour:', email);
       return res.status(401).json({ 
         success: false, 
         error: 'Email ou mot de passe incorrect' 
       });
     }
     
-    console.log('✅ Connexion réussie:', result.rows[0].id);
+    console.log('Connexion réussie:', result.rows[0].id);
     
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
-    console.error('❌ Erreur connexion:', error);
+    console.error('Erreur connexion:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -318,7 +318,7 @@ router.post('/private-messages', async (req, res) => {
     const users = await query('SELECT id FROM users WHERE id = $1 OR id = $2', [senderId, receiverId]);
     
     if (users.rows.length !== 2) {
-      console.error(`❌ Utilisateur manquant: sender=${senderId}, receiver=${receiverId}`);
+      console.error(` Utilisateur manquant: sender=${senderId}, receiver=${receiverId}`);
       return res.status(400).json({ 
         success: false, 
         error: 'Un des utilisateurs n\'existe pas' 
@@ -334,7 +334,7 @@ router.post('/private-messages', async (req, res) => {
     
     res.json({ success: true });
   } catch (error) {
-    console.error('❌ Erreur:', error);
+    console.error(' Erreur:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

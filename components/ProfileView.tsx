@@ -56,7 +56,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userId, isDarkMode = false, o
         Alert.alert('Erreur', 'Impossible de charger le profil');
       }
     } catch (error) {
-      console.error('❌ Erreur chargement profil:', error);
+      console.error(' Erreur chargement profil:', error);
       Alert.alert('Erreur', 'Impossible de se connecter au serveur');
     } finally {
       setLoading(false);
@@ -83,7 +83,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userId, isDarkMode = false, o
         Alert.alert('Erreur', 'Impossible de mettre à jour le profil');
       }
     } catch (error) {
-      console.error('❌ Erreur mise à jour profil:', error);
+      console.error(' Erreur mise à jour profil:', error);
       Alert.alert('Erreur', 'Impossible de se connecter au serveur');
     } finally {
       setSaving(false);
@@ -114,7 +114,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userId, isDarkMode = false, o
         console.log('📷 Image sélectionnée');
       }
     } catch (error) {
-      console.error('❌ Erreur sélection image:', error);
+      console.error(' Erreur sélection image:', error);
       Alert.alert('Erreur', 'Impossible de sélectionner une image');
     }
   };

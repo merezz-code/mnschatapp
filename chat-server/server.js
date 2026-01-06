@@ -33,7 +33,7 @@ function isUserOnline(userId) {
 }
 
 io.on('connection', async (socket) => {
-  console.log(`🔌 Utilisateur connecté: ${socket.id}`);
+  console.log(`Utilisateur connecté: ${socket.id}`);
   
   const userId = socket.handshake.query.userId;
   
@@ -51,11 +51,11 @@ io.on('connection', async (socket) => {
       isOnline: true,
     });
     
-    console.log(`👤 User ${userId} est maintenant en ligne`);
+    console.log(`User ${userId} est maintenant en ligne`);
   }
 
   socket.on('private_message', (data) => {
-    console.log(`💬 Message privé de ${data.senderId} vers ${data.receiverId}`);
+    console.log(`Message privé de ${data.senderId} vers ${data.receiverId}`);
     io.emit('receive_private_message', data);
     console.log(`Message privé diffusé`);
   });
@@ -73,7 +73,7 @@ io.on('connection', async (socket) => {
       userGroups.set(userId, new Set());
     }
     userGroups.get(userId).add(groupId);
-    console.log(`👥 ${userId} (${socket.id}) a rejoint le groupe ${groupId}`);
+    console.log(`${userId} (${socket.id}) a rejoint le groupe ${groupId}`);
   });
 
   socket.on('leave_group', (groupId) => {
@@ -81,7 +81,7 @@ io.on('connection', async (socket) => {
     if (userGroups.has(userId)) {
       userGroups.get(userId).delete(groupId);
     }
-    console.log(`👋 ${userId} a quitté le groupe ${groupId}`);
+    console.log(` ${userId} a quitté le groupe ${groupId}`);
   });
 
   socket.on('typing', (data) => {
@@ -141,7 +141,7 @@ io.on('connection', async (socket) => {
   // Vérifier le statut d'un utilisateur
   socket.on('check_user_status', (targetUserId) => {
     const status = isUserOnline(targetUserId);
-    console.log(`🔍 Vérification statut de ${targetUserId}: ${status ? 'EN LIGNE' : 'HORS LIGNE'}`);
+    console.log(`Vérification statut de ${targetUserId}: ${status ? 'EN LIGNE' : 'HORS LIGNE'}`);
     
     socket.emit('user_status_response', {
       userId: targetUserId,

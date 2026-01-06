@@ -9,11 +9,11 @@ const pool = new Pool({
 
 // Test de connexion
 pool.on('connect', () => {
-  console.log('✅ Connecté à PostgreSQL');
+  console.log('Connecté à PostgreSQL');
 });
 
 pool.on('error', (err) => {
-  console.error('❌ Erreur PostgreSQL:', err);
+  console.error('Erreur PostgreSQL:', err);
 });
 
 // Fonction helper pour exécuter des requêtes

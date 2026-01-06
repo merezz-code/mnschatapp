@@ -10,7 +10,7 @@ class SocketService {
 
   connect(userId: string) {
     if (this.socket?.connected) {
-      console.log('✅ Socket déjà connecté');
+      console.log('Socket déjà connecté');
       return this.socket;
     }
 
@@ -26,7 +26,7 @@ class SocketService {
     });
 
     this.socket.on('connect', () => {
-      console.log('✅ Connecté au serveur Socket.io:', this.socket?.id);
+      console.log('Connecté au serveur Socket.io:', this.socket?.id);
       this.reconnectAttempts = 0;
       
       if (userId) {
@@ -35,7 +35,7 @@ class SocketService {
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('❌ Déconnecté du serveur Socket.io:', reason);
+      console.log(' Déconnecté du serveur Socket.io:', reason);
       if (reason === 'io server disconnect') {
         this.socket?.connect();
       }
@@ -43,7 +43,7 @@ class SocketService {
 
     this.socket.on('connect_error', (error) => {
       this.reconnectAttempts++;
-      console.error(`❌ Erreur connexion Socket.io (${this.reconnectAttempts}/${this.maxReconnectAttempts}):`, error.message);
+      console.error(` Erreur connexion Socket.io (${this.reconnectAttempts}/${this.maxReconnectAttempts}):`, error.message);
       
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         console.error('🔴 Nombre maximum de tentatives de reconnexion atteint');
@@ -108,7 +108,7 @@ class SocketService {
       this.socket.emit('private_message', messageData);
       console.log(`💬 Message privé envoyé à ${data.receiverId}`);
     } else {
-      console.error('❌ Socket non connecté - impossible d\'envoyer le message');
+      console.error(' Socket non connecté - impossible d\'envoyer le message');
     }
   }
 
@@ -164,7 +164,7 @@ class SocketService {
       this.socket.emit('group_message', messageData);
       console.log(`💬 Message de groupe envoyé au groupe ${data.groupId}`);
     } else {
-      console.error('❌ Socket non connecté - impossible d\'envoyer le message');
+      console.error(' Socket non connecté - impossible d\'envoyer le message');
     }
   }
 

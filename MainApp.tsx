@@ -50,13 +50,13 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
       
       if (response.success && response.groups) {
         setRooms(response.groups);
-        console.log(`✅ ${response.groups.length} groupe(s) chargé(s)`);
+        console.log(`${response.groups.length} groupe(s) chargé(s)`);
       } else {
         console.warn('⚠️ Aucun groupe trouvé');
         setRooms([]);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement groupes:', error);
+      console.error(' Erreur chargement groupes:', error);
       Alert.alert('Erreur', 'Impossible de charger les groupes');
       setRooms([]);
     } finally {
@@ -69,7 +69,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
    */
   useEffect(() => {
     if (!me || !me.id) {
-      console.error('❌ Aucun utilisateur connecté');
+      console.error(' Aucun utilisateur connecté');
       return;
     }
 
@@ -78,9 +78,9 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
     // 🔌 Connexion Socket.io
     try {
       socketService.connect(me.id);
-      console.log('✅ Socket.io connecté');
+      console.log('Socket.io connecté');
     } catch (error) {
-      console.error('❌ Erreur connexion Socket.io:', error);
+      console.error(' Erreur connexion Socket.io:', error);
       Alert.alert(
         'Erreur de connexion',
         'Impossible de se connecter au serveur de chat en temps réel'
@@ -106,7 +106,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
    * 👥 Gérer la création d'un nouveau groupe
    */
   const handleCreateRoom = useCallback((newRoom: any) => {
-    console.log('➕ Nouveau groupe créé:', newRoom.name);
+    console.log('Nouveau groupe créé:', newRoom.name);
     
     // Recharger les groupes depuis l'API
     fetchRooms();
@@ -118,7 +118,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
   }, [fetchRooms]);
 
   /**
-   * 🎨 Thème de l'application
+   * Thème de l'application
    */
   const theme = {
     bg: isDarkMode ? '#0f172a' : '#f8fafc',
@@ -129,17 +129,17 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
   };
 
   /**
-   * 🖼️ Rendu du contenu selon l'onglet actif
+   * Rendu du contenu selon l'onglet actif
    */
   const renderContent = () => {
-    // 💬 Chat groupe ouvert
+    // Chat groupe ouvert
     if (activeRoom) {
       return (
         <ChatRoomView
           room={activeRoom}
           me={me}
           onBack={() => {
-            console.log('🔙 Retour depuis le chat de groupe');
+            console.log('Retour depuis le chat de groupe');
             socketService.leaveGroup(activeRoom.id.toString());
             setActiveRoom(null);
             fetchRooms(); // Recharger les groupes
@@ -149,7 +149,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
       );
     }
 
-    // 💬 Chat privé ouvert
+    //  Chat privé ouvert
     if (activePrivateChat) {
       return (
         <ChatPrivateView
@@ -160,7 +160,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
             setActivePrivateChat(null);
           }}
           onBlockUser={() => {
-            console.log('🚫 Utilisateur bloqué');
+            console.log('Utilisateur bloqué');
             setActivePrivateChat(null);
           }}
           isDarkMode={isDarkMode}
@@ -168,7 +168,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
       );
     }
 
-    // 📑 Onglets principaux
+    // Onglets principaux
     switch (currentTab) {
       case 'CHATS':
         return (

@@ -64,7 +64,7 @@ const ContactList: React.FC<ContactListProps> = ({ me, onStartChat, isDarkMode =
       setBlockedIds([]);
       
     } catch (error) {
-      console.error("❌ Erreur chargement contacts:", error);
+      console.error(" Erreur chargement contacts:", error);
       Alert.alert('Erreur', 'Impossible de charger les contacts');
     } finally {
       setLoading(false);
@@ -93,7 +93,7 @@ const ContactList: React.FC<ContactListProps> = ({ me, onStartChat, isDarkMode =
       
       console.log(`${isCurrentlyBlocked ? '✅ Débloqué' : '🚫 Bloqué'}: ${userId}`);
     } catch (error) {
-      console.error("❌ Erreur lors du (dé)blocage:", error);
+      console.error(" Erreur lors du (dé)blocage:", error);
       Alert.alert("Erreur", "Impossible de modifier le statut de blocage");
     }
   };

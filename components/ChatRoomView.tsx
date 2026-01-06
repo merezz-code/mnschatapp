@@ -90,7 +90,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
 
     return () => {
       socketService.leaveGroup(room.id.toString());
-      console.log(`❌ Quitté le groupe Socket.io: ${room.id}`);
+      console.log(` Quitté le groupe Socket.io: ${room.id}`);
       
       if (durationInterval.current) {
         clearInterval(durationInterval.current);
@@ -108,10 +108,10 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       
       if (response.success && response.messages) {
         setMessages(response.messages);
-        console.log(`✅ ${response.messages.length} messages chargés`);
+        console.log(`${response.messages.length} messages chargés`);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement messages:', error);
+      console.error(' Erreur chargement messages:', error);
       Alert.alert('Erreur', 'Impossible de charger les messages');
     } finally {
       setLoading(false);
@@ -128,10 +128,10 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
         
         setMembers(membersList);
         setAdmins(adminsList);
-        console.log(`✅ ${membersList.length} membres chargés`);
+        console.log(`${membersList.length} membres chargés`);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement membres:', error);
+      console.error(' Erreur chargement membres:', error);
     }
   };
 
@@ -143,7 +143,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
         setAllUsers(response.users);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement utilisateurs:', error);
+      console.error(' Erreur chargement utilisateurs:', error);
     }
   };
 
@@ -176,7 +176,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       // Envoyer via Socket.io
       socketService.sendGroupMessage(messageData);
 
-      console.log('✅ Message de groupe envoyé');
+      console.log('Message de groupe envoyé');
       
       loadMessages();
 
@@ -185,7 +185,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       }, 100);
 
     } catch (error) {
-      console.error('❌ Erreur envoi message:', error);
+      console.error(' Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
     }
   };
@@ -231,7 +231,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
         await sound.playAsync();
       }
     } catch (error) {
-      console.error('❌ Erreur lecture audio:', error);
+      console.error(' Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
@@ -286,7 +286,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       }, 1000);
 
     } catch (err) {
-      console.error('❌ Erreur enregistrement:', err);
+      console.error(' Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible d'enregistrer l'audio");
     }
   };
@@ -310,7 +310,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error('❌ Erreur arrêt enregistrement:', err);
+      console.error(' Erreur arrêt enregistrement:', err);
     }
   };
 
@@ -321,7 +321,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       setShowSettings(false);
       room.name = editedName;
     } catch (error) {
-      console.error('❌ Erreur mise à jour:', error);
+      console.error(' Erreur mise à jour:', error);
       Alert.alert('Erreur', 'Impossible de modifier le nom');
     }
   };
@@ -333,7 +333,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
       setShowAddMember(false);
       Alert.alert('Succès', 'Membre ajouté');
     } catch (error) {
-      console.error('❌ Erreur ajout membre:', error);
+      console.error(' Erreur ajout membre:', error);
       Alert.alert('Erreur', "Impossible d'ajouter le membre");
     }
   };
@@ -353,7 +353,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
               loadMembers();
               Alert.alert('Succès', 'Membre retiré');
             } catch (error) {
-              console.error('❌ Erreur retrait membre:', error);
+              console.error(' Erreur retrait membre:', error);
               Alert.alert('Erreur', 'Impossible de retirer le membre');
             }
           }
@@ -378,7 +378,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
               Alert.alert('Succès', 'Vous avez quitté le groupe');
               onBack();
             } catch (error) {
-              console.error('❌ Erreur quitter groupe:', error);
+              console.error(' Erreur quitter groupe:', error);
               Alert.alert('Erreur', 'Impossible de quitter le groupe');
             }
           }
@@ -403,7 +403,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
               Alert.alert('Succès', 'Groupe supprimé');
               onBack();
             } catch (error) {
-              console.error('❌ Erreur suppression:', error);
+              console.error(' Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de supprimer le groupe');
             }
           }
