@@ -31,12 +31,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
-import { 
-  getPrivateMessages, 
-  sendPrivateMessage, 
-  deleteMessageLocal, 
+import {
+  getPrivateMessages,
+  sendPrivateMessage,
+  deleteMessageLocal,
   deleteMessageForAll,
-  getAllUsers 
+  getAllUsers
 } from '../services/api';
 import socketService from '../services/socketService';
 
@@ -66,6 +66,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
   const [isTyping, setIsTyping] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const [isBlocked, setIsBlocked] = useState(false);
+
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -86,7 +88,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       ) {
         console.log('📨 Nouveau message privé reçu');
         loadMessages();
-        
+
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -133,7 +135,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       if (durationInterval.current) clearInterval(durationInterval.current);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       socketService.emitTyping(otherUserId, false);
-      
+
       if (soundRef.current) {
         soundRef.current.unloadAsync().catch(err => console.log("Cleanup error", err));
       }
@@ -143,7 +145,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const loadMessages = async () => {
     try {
       const response = await getPrivateMessages(me.id, otherUserId);
-      
+
       if (response.success && response.messages) {
         setMessages(response.messages);
         console.log(`✅ ${response.messages.length} messages chargés`);
@@ -157,7 +159,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const loadUserDetails = async () => {
     try {
       const response = await getAllUsers();
-      
+
       if (response.success && response.users) {
         const user = response.users.find((u: any) => u.id === otherUserId);
         if (user) {
@@ -247,7 +249,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       socketService.sendPrivateMessage(messageData);
 
       console.log('✅ Message envoyé');
-      
+
       loadMessages();
 
       setTimeout(() => {
@@ -372,15 +374,34 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           text: 'Bloquer',
           style: 'destructive',
           onPress: () => {
-            // TODO: Implémenter le blocage via API
+            // TODO: Bloquer via API
+            setIsBlocked(true);
             Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
-            if (onBlockUser) onBlockUser(otherUserId);
-            onBack();
           },
         },
       ]
     );
   };
+
+  const handleUnblockUser = () => {
+    Alert.alert(
+      'Débloquer cet utilisateur',
+      `Voulez-vous débloquer ${chatWith.username} ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Débloquer',
+          style: 'default',
+          onPress: () => {
+            // TODO: Débloquer via API
+            setIsBlocked(false);
+            Alert.alert('Débloqué', `${chatWith.username} a été débloqué.`);
+          },
+        },
+      ]
+    );
+  };
+
 
   const handleCall = () => {
     Alert.alert('Appel vocal', 'Fonctionnalité en développement...');
@@ -396,19 +417,19 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       "Supprimer le message",
       "Voulez-vous supprimer ce message ?",
       [
-        { 
-          text: "Pour moi", 
-          onPress: () => handleDeleteMessageLocal(message.id) 
+        {
+          text: "Pour moi",
+          onPress: () => handleDeleteMessageLocal(message.id)
         },
-        { 
-          text: "Pour tous", 
+        {
+          text: "Pour tous",
           onPress: () => {
             if (message.senderId === me.id) {
               handleDeleteMessageForEveryone(message.id);
             } else {
               Alert.alert("Action impossible", "Vous ne pouvez supprimer pour tous que vos propres messages.");
             }
-          } 
+          }
         },
         { text: "Annuler", style: "cancel" }
       ]
@@ -429,16 +450,16 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const handleDeleteMessageForEveryone = async (messageId: number) => {
     try {
       await deleteMessageForAll(messageId);
-      
+
       socketService.emitDeleteMessage({
         messageId: messageId,
         receiverId: otherUserId
       });
 
-      setMessages(prevMessages => 
-        prevMessages.map(msg => 
-          msg.id === messageId 
-            ? { ...msg, content: 'Ce message a été supprimé', is_deleted: 1 } 
+      setMessages(prevMessages =>
+        prevMessages.map(msg =>
+          msg.id === messageId
+            ? { ...msg, content: 'Ce message a été supprimé', is_deleted: 1 }
             : msg
         )
       );
@@ -475,13 +496,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           />
         )}
 
-        <TouchableOpacity 
+        <TouchableOpacity
           activeOpacity={0.8}
           onLongPress={() => showDeleteOptions(item)}
           delayLongPress={300}
           style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
         >
-          
+
           {/* IMAGE */}
           {item.type === 'image' && item.imageUrl && (
             <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
@@ -500,7 +521,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           {/* AUDIO */}
           {item.type === 'audio' && item.audioUrl && (
             <View style={styles.audioContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.audioBtn, isMe ? styles.audioBtnMe : styles.audioBtnTheir]}
                 onPress={() => playAudio(item.audioUrl, item.id.toString())}
                 onLongPress={() => showDeleteOptions(item)}
@@ -518,7 +539,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               <View style={styles.audioProgressContainer}>
                 <View style={[styles.audioProgressBar, isMe ? styles.audioProgressBarMe : styles.audioProgressBarTheir]}>
                   <View style={[
-                    styles.audioProgressFill, 
+                    styles.audioProgressFill,
                     isMe ? styles.audioProgressFillMe : styles.audioProgressFillTheir,
                     { width: `${audioProgress[item.id.toString()] || 0}%` }
                   ]} />
@@ -594,51 +615,60 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.inputSection}>
-          {isRecording ? (
-            <View style={styles.recordingContainer}>
-              <View style={styles.recordingInfo}>
-                <View style={styles.recordingDot} />
-                <Text style={styles.recordingText}>
-                  Enregistrement... {formatDuration(recordingDuration)}
-                </Text>
-              </View>
-              <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
-                <StopCircle size={28} color="#ef4444" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              <View style={styles.inputContainer}>
-                <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
-                  <Paperclip size={20} color="#94a3b8" />
-                </TouchableOpacity>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Message..."
-                  value={inputText}
-                  onChangeText={handleInputChange}
-                  multiline
-                />
-                <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
-                  <ImageIcon size={20} color="#94a3b8" />
+          {isBlocked ? (
+            <TouchableOpacity
+              style={[styles.sendBtn, { flex: 1, backgroundColor: '#ef4444' }]}
+              onPress={handleUnblockUser}
+            >
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Débloquer</Text>
+            </TouchableOpacity>
+          ) :
+            isRecording ? (
+              <View style={styles.recordingContainer}>
+                <View style={styles.recordingInfo}>
+                  <View style={styles.recordingDot} />
+                  <Text style={styles.recordingText}>
+                    Enregistrement... {formatDuration(recordingDuration)}
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
+                  <StopCircle size={28} color="#ef4444" />
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={[styles.sendBtn, !inputText.trim() && styles.micBtn]}
-                onPress={() => {
-                  if (inputText.trim()) {
-                    handleSendMessage(inputText.trim(), 'text');
-                    setInputText('');
-                    socketService.emitTyping(otherUserId, false);
-                  } else {
-                    startRecording();
-                  }
-                }}
-              >
-                {inputText.trim() ? <Send size={24} color="#fff" /> : <Mic size={24} color="#fff" />}
-              </TouchableOpacity>
-            </>
-          )}
+            ) : (
+              <>
+                <View style={styles.inputContainer}>
+                  <TouchableOpacity style={styles.attachBtn} onPress={pickDocument}>
+                    <Paperclip size={20} color="#94a3b8" />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Message..."
+                    value={inputText}
+                    onChangeText={handleInputChange}
+                    multiline
+                  />
+                  <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
+                    <ImageIcon size={20} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={[styles.sendBtn, !inputText.trim() && styles.micBtn]}
+                  onPress={() => {
+                    if (inputText.trim()) {
+                      handleSendMessage(inputText.trim(), 'text');
+                      setInputText('');
+                      socketService.emitTyping(otherUserId, false);
+                    } else {
+                      startRecording();
+                    }
+                  }}
+                >
+                  {inputText.trim() ? <Send size={24} color="#fff" /> : <Mic size={24} color="#fff" />}
+                </TouchableOpacity>
+              </>
+            )}
+      
         </View>
       </KeyboardAvoidingView>
 
@@ -654,13 +684,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             </View>
 
             <TouchableOpacity style={styles.clearBtn} onPress={handleClearChat}>
-              <Trash2 size={22} color="#f97316" /> 
+              <Trash2 size={22} color="#f97316" />
               <Text style={styles.clearBtnText}>Vider la discussion</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.blockBtn} onPress={handleBlockUser}>
+            <TouchableOpacity style={styles.blockBtn} onPress={isBlocked ? handleUnblockUser : handleBlockUser}>
               <UserX size={22} color="#ef4444" />
-              <Text style={styles.blockBtnText}>Bloquer {chatWith.username}</Text>
+              <Text style={styles.blockBtnText}> {isBlocked ? 'Débloquer' : 'Bloquer'} {chatWith.username}</Text>
             </TouchableOpacity>
           </View>
         </View>

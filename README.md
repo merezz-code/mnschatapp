@@ -128,5 +128,5 @@ DATABASE_URL=postgresql://postgres:admin@localhost:5432/mnschatapp
 # Port du serveur
 PORT=3000
 
-#pour api Uri il faut mettre address IP de votre wifi make sure ur pc and smartphon have the same connection wifi 10.120.62.243 = > with ur address wifi !!
-API_URL = 'http://10.120.62.243:3000/api'
+#pour api Uri il faut mettre address IP de votre wifi make sure ur pc and smartphon have the same connection wifi 192.168.1.7 = > with ur address wifi !!
+API_URL = 'http://192.168.1.7:3000/api'

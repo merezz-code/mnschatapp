@@ -15,7 +15,7 @@ export default function App() {
 
   const checkServerConnection = async () => {
     try {
-      const API_URL = 'http://10.120.62.243:3000';
+      const API_URL = 'http://192.168.1.7:3000';
 
       const response = await fetch(API_URL);
       console.log("hahahaha");

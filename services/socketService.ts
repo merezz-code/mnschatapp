@@ -8,7 +8,7 @@ class SocketService {
   private readonly maxReconnectAttempts = 5;
 
   // URL de votre serveur Socket.io
-  private readonly SERVER_URL = 'http://10.120.62.243:3000';
+  private readonly SERVER_URL = 'http://192.168.1.7:3000';
 
   /**
    * 🔌 Connecter au serveur Socket.io
@@ -38,7 +38,7 @@ class SocketService {
 
     this.socket.on('disconnect', (reason) => {
       console.log('❌ Déconnecté du serveur Socket.io:', reason);
-      
+
       if (reason === 'io server disconnect') {
         // Le serveur a déconnecté le socket, on se reconnecte
         this.socket?.connect();
@@ -48,7 +48,7 @@ class SocketService {
     this.socket.on('connect_error', (error) => {
       this.reconnectAttempts++;
       console.error(`❌ Erreur connexion Socket.io (${this.reconnectAttempts}/${this.maxReconnectAttempts}):`, error.message);
-      
+
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         console.error('🔴 Nombre maximum de tentatives de reconnexion atteint');
       }
@@ -334,7 +334,24 @@ class SocketService {
       console.log('🧹 Listeners métier supprimés');
     }
   }
-}
 
+  /**
+   * 👥 Écouter les nouveaux groupes publics
+   */
+  onNewPublicGroup(callback: (group: any) => void) {
+    if (this.socket) {
+      this.socket.on('new_public_group', callback);
+    }
+  }
+
+  /**
+   * 🚫 Arrêter d'écouter les nouveaux groupes publics
+   */
+  offNewPublicGroup() {
+    if (this.socket) {
+      this.socket.off('new_public_group');
+    }
+  }
+}
 // Export singleton
 export default new SocketService();
