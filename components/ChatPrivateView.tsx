@@ -66,7 +66,10 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [isTyping, setIsTyping] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isBlocked, setIsBlocked] = useState(false);
-
+  //Initialisation du statut (gérer les types number et boolean)
+  const [isUserOnline, setIsUserOnline] = useState<boolean>(
+    chatWith.is_online === 1 || chatWith.is_online === true
+  );
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -123,13 +126,13 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     // Écouter les changements de statut
     socketService.onUserStatusChange((data) => {
       console.log('user_status_changed reçu:', data);
-      
+
       if (data.userId === otherUserId || data.userId === otherUserId.toString()) {
         const newStatus = data.isOnline === true || data.isOnline === 1;
-       
+
         // Mettre à jour le state local
         setIsUserOnline(newStatus);
-        
+
         // Aussi mettre à jour userDetails si il existe
         setUserDetails((prev: any) => {
           if (prev) {
@@ -184,12 +187,12 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         const user = response.users.find((u: any) => u.id === otherUserId);
         if (user) {
           setUserDetails(user);
-          
+
           // Mettre à jour le statut avec la valeur de la DB
           const onlineStatus = user.is_online === 1 || user.is_online === true;
           setIsUserOnline(onlineStatus);
           chatWith.is_online = user.is_online;
-          
+
           console.log(`Détails utilisateur chargés - Statut: ${onlineStatus ? '🟢 EN LIGNE' : '⚫ HORS LIGNE'}`);
         }
       }
@@ -274,7 +277,8 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       // Envoyer via Socket.io
       socketService.sendPrivateMessage(messageData);
 
-      console.log('✅ Message envoyé');
+      console.log(' Message envoyé');
+
       loadMessages();
 
       setTimeout(() => {
@@ -693,7 +697,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
                 </TouchableOpacity>
               </>
             )}
-      
         </View>
       </KeyboardAvoidingView>
 
@@ -713,9 +716,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               <Text style={styles.clearBtnText}>Vider la discussion</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.blockBtn} onPress={isBlocked ? handleUnblockUser : handleBlockUser}>
+            <TouchableOpacity style={styles.blockBtn} onPress={handleBlockUser}>
               <UserX size={22} color="#ef4444" />
-              <Text style={styles.blockBtnText}> {isBlocked ? 'Débloquer' : 'Bloquer'} {chatWith.username}</Text>
+              <Text style={styles.blockBtnText}>Bloquer {chatWith.username}</Text>
             </TouchableOpacity>
           </View>
         </View>
