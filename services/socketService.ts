@@ -1,5 +1,5 @@
-// services/socketService.ts - AVEC VÉRIFICATION STATUT
 import { io, Socket } from 'socket.io-client';
+import { SERVER_URL } from '../config/api';
 
 class SocketService {
   private socket: Socket | null = null;
@@ -8,7 +8,7 @@ class SocketService {
   private readonly maxReconnectAttempts = 5;
 
   // URL de votre serveur Socket.io
-  private readonly SERVER_URL = 'http://192.168.1.7:3000';
+  private readonly SERVER_URL = SERVER_URL;
 
   connect(userId: string) {
     if (this.socket?.connected) {

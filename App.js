@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import MainApp from './MainApp';
+import { SERVER_URL } from './config/api';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -15,13 +16,9 @@ export default function App() {
 
   const checkServerConnection = async () => {
     try {
-      const API_URL = 'http://192.168.1.7:3000';
-
-      const response = await fetch(API_URL);
-      console.log("hahahaha");
-      console.log(response);
-
+      const response = await fetch(SERVER_URL);
       const data = await response.json();
+
       console.log(data);
       
       if (data.status === 'OK') {
