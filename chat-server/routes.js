@@ -409,6 +409,60 @@ router.get('/groupes', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+// ============ BLOCKS ============
+
+// Vérifier si un utilisateur a bloqué un autre
+router.get('/blocks/check/:me/:other', async (req, res) => {
+  try {
+    const { me, other } = req.params;
+
+    const result = await query(
+      'SELECT 1 FROM blocks WHERE blocker_id = $1 AND blocked_id = $2',
+      [me, other]
+    );
+
+    res.json({ blocked: result.rows.length > 0 });
+  } catch (error) {
+    console.error('❌ Erreur checkBlock:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Bloquer un utilisateur
+router.post('/blocks', async (req, res) => {
+  try {
+    const { blockerId, blockedId } = req.body;
+
+    await query(
+      `INSERT INTO blocks (blocker_id, blocked_id, created_at)
+       VALUES ($1, $2, NOW())`,
+      [blockerId, blockedId]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur block user:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+// Débloquer un utilisateur
+router.delete('/blocks', async (req, res) => {
+  try {
+    const { blockerId, blockedId } = req.body;
+
+    await query(
+      'DELETE FROM blocks WHERE blocker_id = $1 AND blocked_id = $2',
+      [blockerId, blockedId]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur unblock user:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 
 module.exports = router;

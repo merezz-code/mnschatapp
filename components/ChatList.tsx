@@ -282,31 +282,81 @@ const ChatList = ({ me, onNavigate, onOpenPrivateChat, onToggleDarkMode, isDarkM
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
-      <Modal visible={isModalOpen} transparent animationType="fade">
+       <Modal 
+        visible={isModalOpen} 
+        transparent 
+        animationType="fade"
+        onRequestClose={() => setIsModalOpen(false)}
+      >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}>
-            <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#000' }]}>Créer un groupe</Text>
+          <View style={[styles.modal, { backgroundColor: isDarkMode ? '#1e293b' : '#fff' }]}>
+            <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#000' }]}>
+              Nouveau {activeTab === 'PRIVATE' ? 'Chat' : 'Groupe'}
+            </Text>
+            
             <TextInput
               placeholder="Nom du groupe"
               placeholderTextColor="#94a3b8"
               value={newRoomName}
               onChangeText={setNewRoomName}
-              style={[styles.modalInput, { color: isDarkMode ? '#fff' : '#000', borderColor: isDarkMode ? '#94a3b8' : '#cbd5e1' }]}
+              style={[
+                styles.input, 
+                { 
+                  backgroundColor: isDarkMode ? '#0f172a' : '#f1f5f9',
+                  color: isDarkMode ? '#fff' : '#000'
+                }
+              ]}
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={[styles.typeButton, newRoomType === RoomType.PUBLIC && styles.typeButtonActive]} onPress={() => setNewRoomType(RoomType.PUBLIC)}>
-                <Text style={styles.typeButtonText}>Public</Text>
+
+            <View style={styles.typeRow}>
+              <TouchableOpacity 
+                onPress={() => setNewRoomType(RoomType.PUBLIC)}
+                style={[styles.typeBtn, newRoomType === RoomType.PUBLIC && styles.typeActive]}
+              >
+                <Ionicons 
+                  name="globe-outline" 
+                  size={32} 
+                  color={newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8'} 
+                />
+                <Text style={[
+                  styles.typeText,
+                  { color: newRoomType === RoomType.PUBLIC ? '#2563eb' : '#94a3b8' }
+                ]}>
+                  Public
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.typeButton, newRoomType === RoomType.PRIVATE && styles.typeButtonActive]} onPress={() => setNewRoomType(RoomType.PRIVATE)}>
-                <Text style={styles.typeButtonText}>Privé</Text>
+
+              <TouchableOpacity 
+                onPress={() => setNewRoomType(RoomType.PRIVATE)}
+                style={[styles.typeBtn, newRoomType === RoomType.PRIVATE && styles.typeActive]}
+              >
+                <Ionicons 
+                  name="lock-closed-outline" 
+                  size={32} 
+                  color={newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8'} 
+                />
+                <Text style={[
+                  styles.typeText,
+                  { color: newRoomType === RoomType.PRIVATE ? '#2563eb' : '#94a3b8' }
+                ]}>
+                  Privé
+                </Text>
               </TouchableOpacity>
             </View>
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setIsModalOpen(false)}>
-                <Text style={styles.modalCancelText}>Annuler</Text>
+
+            <View style={styles.modalBtns}>
+              <TouchableOpacity 
+                onPress={() => {
+                  setIsModalOpen(false);
+                  setNewRoomName('');
+                }} 
+                style={styles.cancel}
+              >
+                <Text style={{ color: '#94a3b8', fontSize: 16 }}>Annuler</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalCreate} onPress={handleCreateRoom}>
-                <Text style={styles.modalCreateText}>Créer</Text>
+
+              <TouchableOpacity onPress={handleCreateRoom} style={styles.create}>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Créer</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -365,7 +415,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
   },
+  input: { borderRadius: 15, padding: 15, marginBottom: 20, fontSize: 16 },
+  typeRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 30 },
+  typeBtn: { alignItems: 'center' },
+  typeActive: { backgroundColor: 'rgba(37,99,235,0.1)', padding: 15, borderRadius: 20 },
+  typeText: { marginTop: 8, fontSize: 14, fontWeight: '600' },
+  modalBtns: { flexDirection: 'row', justifyContent: 'space-between' },
+  cancel: { padding: 15 },
+  create: { backgroundColor: '#2563eb', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 15 },
 
+  modal: { width: '90%', borderRadius: 30, padding: 25 },
+    
 });
 
 export default ChatList;

@@ -37,6 +37,7 @@ import {
   getAllUsers
 } from '../services/api';
 import socketService from '../services/socketService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
 interface ChatPrivateViewProps {
@@ -77,10 +78,47 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const otherUserId = chatWith.id;
+  const checkBlock = async () => {
+  try {
+    const res = await fetch(`http://192.168.1.7:3000/api/blocks/check/${me.id}/${otherUserId}`);
+    const text = await res.text();  // <- voir ce que le serveur renvoie
+    console.log('Réponse brute:', text);
+    const data = JSON.parse(text);  // ou res.json() si c’est bien du JSON
+    setIsBlocked(data.blocked);
+    await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
+  } catch (error) {
+    console.error('Erreur checkBlock:', error);
+  }
+};
+
+  const loadBlockStatus = async () => {
+    try {
+      const res = await fetch(`http://192.168.1.7:3000/api/blocks/check/${me.id}/${otherUserId}`);
+      const data = await res.json();
+      setIsBlocked(data.blocked);
+      await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
+    } catch (error) {
+      console.error('Erreur checkBlock:', error);
+      // fallback sur le cache si l'API échoue
+      const cached = await AsyncStorage.getItem(`blocked_${otherUserId}`);
+      if (cached !== null) setIsBlocked(cached === 'true');
+    }
+  };
+
 
   useEffect(() => {
-    loadMessages();
-    loadUserDetails();
+    const init = async () => {
+      await loadMessages();
+      await loadUserDetails();
+      await loadBlockStatus();
+
+      const cached = await AsyncStorage.getItem(`blocked_${otherUserId}`);
+      if (cached !== null) setIsBlocked(cached === 'true');
+      await checkBlock();
+    };
+
+    init();
+
 
     //Vérifier le statut en temps réel via socket
     socketService.checkUserStatus(otherUserId, (data) => {
@@ -121,6 +159,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           }, 3000);
         }
       }
+    });
+    
+
+    socketService.onMessageBlocked(() => {
+      Alert.alert('Message bloqué', 'Vous êtes bloqué par cet utilisateur.');
     });
 
     // Écouter les changements de statut
@@ -254,6 +297,10 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     fileName: string | null = null,
     fileUrl: string | null = null
   ) => {
+    if (isBlocked) {
+    Alert.alert('Action impossible', 'Vous ne pouvez pas envoyer de messages à cet utilisateur.');
+    return;
+  }
     if (type === 'text' && !content.trim()) return;
 
     try {
@@ -393,43 +440,46 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     );
   };
 
-  const handleBlockUser = () => {
-    Alert.alert(
-      'Bloquer cet utilisateur',
-      `Voulez-vous vraiment bloquer ${chatWith.username} ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Bloquer',
-          style: 'destructive',
-          onPress: () => {
-            // TODO: Bloquer via API
-            setIsBlocked(true);
-            Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
-          },
-        },
-      ]
-    );
+  const handleBlockUser = async () => {
+    try {
+      console.log('Utilisateur *' + otherUserId + '* va être bloqué');
+      const res = await fetch('http://192.168.1.7:3000/api/blocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blockerId: me.id, blockedId: otherUserId })
+      });
+
+      if (res.ok) {
+        console.log('Utilisateur bloqué avec succès');
+        setIsBlocked(true);
+        await AsyncStorage.setItem(`blocked_${otherUserId}`, 'true');
+        Alert.alert('Bloqué', `${chatWith.username} a été bloqué.`);
+      }
+    } catch (err) {
+      console.error('Erreur block:', err);
+      Alert.alert('Erreur', "Impossible de bloquer l'utilisateur");
+    }
   };
 
-  const handleUnblockUser = () => {
-    Alert.alert(
-      'Débloquer cet utilisateur',
-      `Voulez-vous débloquer ${chatWith.username} ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Débloquer',
-          style: 'default',
-          onPress: () => {
-            // TODO: Débloquer via API
-            setIsBlocked(false);
-            Alert.alert('Débloqué', `${chatWith.username} a été débloqué.`);
-          },
-        },
-      ]
-    );
+  const handleUnblockUser = async () => {
+    try {
+      const res = await fetch('http://192.168.1.7:3000/api/blocks', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blockerId: me.id, blockedId: otherUserId })
+      });
+
+      if (res.ok) {
+        setIsBlocked(false);
+        await AsyncStorage.setItem(`blocked_${otherUserId}`, 'false');
+        Alert.alert('Débloqué', `${chatWith.username} a été débloqué.`);
+      }
+    } catch (err) {
+      console.error('Erreur unblock:', err);
+      Alert.alert('Erreur', "Impossible de débloquer l'utilisateur");
+    }
   };
+
 
 
   const handleCall = () => {
@@ -440,6 +490,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     setInputText(text);
     socketService.emitTyping(otherUserId, text.length > 0);
   };
+
 
   const showDeleteOptions = (message: any) => {
     Alert.alert(
@@ -716,9 +767,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               <Text style={styles.clearBtnText}>Vider la discussion</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.blockBtn} onPress={handleBlockUser}>
+            <TouchableOpacity style={styles.blockBtn} onPress={isBlocked ? handleUnblockUser : handleBlockUser}>
               <UserX size={22} color="#ef4444" />
-              <Text style={styles.blockBtnText}>Bloquer {chatWith.username}</Text>
+              <Text style={styles.blockBtnText}>{isBlocked ? 'Débloquer' : 'Bloquer'} {chatWith.username}</Text>
             </TouchableOpacity>
           </View>
         </View>

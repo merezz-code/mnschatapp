@@ -272,7 +272,6 @@ class SocketService {
       console.log('🧹 Listeners métier supprimés');
     }
   }
-}
 
 
   /**
@@ -292,6 +291,12 @@ class SocketService {
       this.socket.off('new_public_group');
     }
   }
+  onMessageBlocked(callback: () => void) {
+  if (this.socket) {
+    this.socket.on('message_blocked', callback);
+  }
+}
+
 }
 // Export singleton
 export default new SocketService();
