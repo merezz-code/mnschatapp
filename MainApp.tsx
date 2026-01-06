@@ -78,7 +78,6 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
     // 🔌 Connexion Socket.io
     try {
       socketService.connect(me.id);
-      socketService.setUserOnline(me.id);
       console.log('✅ Socket.io connecté');
     } catch (error) {
       console.error('❌ Erreur connexion Socket.io:', error);

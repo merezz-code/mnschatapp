@@ -1,18 +1,15 @@
-// services/socketService.ts
+// services/socketService.ts - AVEC VÉRIFICATION STATUT
 import { io, Socket } from 'socket.io-client';
 
 class SocketService {
   private socket: Socket | null = null;
-  private userId: string | null = null;
+  private userId: string | null = null; 
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
 
   // URL de votre serveur Socket.io
   private readonly SERVER_URL = 'http://192.168.1.7:3000';
 
-  /**
-   * 🔌 Connecter au serveur Socket.io
-   */
   connect(userId: string) {
     if (this.socket?.connected) {
       console.log('✅ Socket déjà connecté');
@@ -21,7 +18,7 @@ class SocketService {
 
     this.userId = userId;
     this.socket = io(this.SERVER_URL, {
-      transports: ['websocket', 'polling'], // Ajout de polling en fallback
+      transports: ['websocket', 'polling'],
       query: { userId },
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
@@ -30,17 +27,19 @@ class SocketService {
       timeout: 10000
     });
 
-    // Événements de connexion
     this.socket.on('connect', () => {
       console.log('✅ Connecté au serveur Socket.io:', this.socket?.id);
       this.reconnectAttempts = 0;
+      
+      if (userId) {
+        this.socket?.emit('user_online', userId);
+      }
     });
 
     this.socket.on('disconnect', (reason) => {
       console.log('❌ Déconnecté du serveur Socket.io:', reason);
 
       if (reason === 'io server disconnect') {
-        // Le serveur a déconnecté le socket, on se reconnecte
         this.socket?.connect();
       }
     });
@@ -70,9 +69,6 @@ class SocketService {
     return this.socket;
   }
 
-  /**
-   * 🔌 Déconnecter du serveur
-   */
   disconnect() {
     if (this.socket) {
       if (this.userId) {
@@ -86,25 +82,16 @@ class SocketService {
     }
   }
 
-  /**
-   * 📊 Obtenir l'instance du socket
-   */
   getSocket(): Socket | null {
     return this.socket;
   }
 
-  /**
-   * ✅ Vérifier si le socket est connecté
-   */
   isConnected(): boolean {
     return this.socket?.connected || false;
   }
 
   // ============ MESSAGES PRIVÉS ============
 
-  /**
-   * 💬 Envoyer un message privé
-   */
   sendPrivateMessage(data: {
     senderId: string;
     receiverId: string;
@@ -128,27 +115,18 @@ class SocketService {
     }
   }
 
-  /**
-   * 📨 Écouter les messages privés
-   */
   onPrivateMessage(callback: (message: any) => void) {
     if (this.socket) {
       this.socket.on('receive_private_message', callback);
     }
   }
 
-  /**
-   * 🚫 Arrêter d'écouter les messages privés
-   */
   offPrivateMessage() {
     if (this.socket) {
       this.socket.off('receive_private_message');
     }
   }
 
-  /**
-   * 🗑️ Supprimer un message privé
-   */
   emitDeleteMessage(data: { messageId: number; receiverId: string }) {
     if (this.socket) {
       this.socket.emit('delete_private_message', data);
@@ -156,18 +134,12 @@ class SocketService {
     }
   }
 
-  /**
-   * 👀 Écouter les suppressions de messages
-   */
   onMessageDeleted(callback: (data: any) => void) {
     if (this.socket) {
       this.socket.on('message_deleted', callback);
     }
   }
 
-  /**
-   * 🚫 Arrêter d'écouter les suppressions
-   */
   offMessageDeleted() {
     if (this.socket) {
       this.socket.off('message_deleted');
@@ -176,9 +148,6 @@ class SocketService {
 
   // ============ MESSAGES DE GROUPE ============
 
-  /**
-   * 👥 Envoyer un message de groupe
-   */
   sendGroupMessage(data: {
     groupId: string;
     senderId: string;
@@ -202,27 +171,18 @@ class SocketService {
     }
   }
 
-  /**
-   * 📨 Écouter les messages de groupe
-   */
   onGroupMessage(callback: (message: any) => void) {
     if (this.socket) {
       this.socket.on('receive_group_message', callback);
     }
   }
 
-  /**
-   * 🚫 Arrêter d'écouter les messages de groupe
-   */
   offGroupMessage() {
     if (this.socket) {
       this.socket.off('receive_group_message');
     }
   }
 
-  /**
-   * 👥 Rejoindre un groupe
-   */
   joinGroup(groupId: string) {
     if (this.socket) {
       this.socket.emit('join_group', groupId);
@@ -230,9 +190,6 @@ class SocketService {
     }
   }
 
-  /**
-   * 👋 Quitter un groupe
-   */
   leaveGroup(groupId: string) {
     if (this.socket) {
       this.socket.emit('leave_group', groupId);
@@ -242,9 +199,6 @@ class SocketService {
 
   // ============ STATUTS UTILISATEUR ============
 
-  /**
-   * 🟢 Marquer un utilisateur comme en ligne
-   */
   setUserOnline(userId: string) {
     if (this.socket) {
       this.socket.emit('user_online', userId);
@@ -252,9 +206,6 @@ class SocketService {
     }
   }
 
-  /**
-   * ⚫ Marquer un utilisateur comme hors ligne
-   */
   setUserOffline(userId: string) {
     if (this.socket) {
       this.socket.emit('user_offline', userId);
@@ -262,18 +213,20 @@ class SocketService {
     }
   }
 
-  /**
-   * 👀 Écouter les changements de statut
-   */
+  // Vérifier le statut en temps réel
+  checkUserStatus(userId: string, callback: (data: { userId: string; isOnline: boolean }) => void) {
+    if (this.socket) {
+      this.socket.emit('check_user_status', userId);
+      this.socket.once('user_status_response', callback);
+    }
+  }
+
   onUserStatusChange(callback: (data: { userId: string; isOnline: boolean }) => void) {
     if (this.socket) {
       this.socket.on('user_status_changed', callback);
     }
   }
 
-  /**
-   * 🚫 Arrêter d'écouter les changements de statut
-   */
   offUserStatusChange() {
     if (this.socket) {
       this.socket.off('user_status_changed');
@@ -282,27 +235,18 @@ class SocketService {
 
   // ============ STATUT "EN TRAIN D'ÉCRIRE" ============
 
-  /**
-   * ✍️ Notifier qu'on est en train d'écrire
-   */
   emitTyping(receiverId: string, isTyping: boolean) {
     if (this.socket) {
       this.socket.emit('typing', { receiverId, isTyping });
     }
   }
 
-  /**
-   * 👀 Écouter quand quelqu'un écrit
-   */
   onTyping(callback: (data: { senderId: string; isTyping: boolean }) => void) {
     if (this.socket) {
       this.socket.on('user_typing', callback);
     }
   }
 
-  /**
-   * 🚫 Arrêter d'écouter les statuts d'écriture
-   */
   offTyping() {
     if (this.socket) {
       this.socket.off('user_typing');
@@ -311,9 +255,6 @@ class SocketService {
 
   // ============ UTILITAIRES ============
 
-  /**
-   * 🧹 Nettoyer tous les listeners
-   */
   removeAllListeners() {
     if (this.socket) {
       this.socket.removeAllListeners();
@@ -321,9 +262,6 @@ class SocketService {
     }
   }
 
-  /**
-   * 🧹 Nettoyer seulement les listeners métier (garder les événements système)
-   */
   removeBusinessListeners() {
     if (this.socket) {
       this.socket.off('receive_private_message');
@@ -334,6 +272,8 @@ class SocketService {
       console.log('🧹 Listeners métier supprimés');
     }
   }
+}
+
 
   /**
    * 👥 Écouter les nouveaux groupes publics
