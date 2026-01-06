@@ -1,5 +1,3 @@
-// ChatPrivateView.tsx - Version PostgreSQL avec API
-
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -40,6 +38,7 @@ import {
 } from '../services/api';
 import socketService from '../services/socketService';
 
+
 interface ChatPrivateViewProps {
   chatWith: any;
   me: any;
@@ -66,6 +65,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
   const [isTyping, setIsTyping] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
+  
+  //Initialisation du statut (gérer les types number et boolean)
+  const [isUserOnline, setIsUserOnline] = useState<boolean>(
+    chatWith.is_online === 1 || chatWith.is_online === true
+  );
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -77,6 +81,12 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   useEffect(() => {
     loadMessages();
     loadUserDetails();
+
+    //Vérifier le statut en temps réel via socket
+    socketService.checkUserStatus(otherUserId, (data) => {
+      console.log(`🔍 Statut reçu du serveur:`, data);
+      setIsUserOnline(data.isOnline);
+    });
 
     // Écouter les nouveaux messages en temps réel
     socketService.onPrivateMessage((message) => {
@@ -115,12 +125,27 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
     // Écouter les changements de statut
     socketService.onUserStatusChange((data) => {
-      if (data.userId === otherUserId) {
-        setUserDetails((prev: any) => ({
-          ...prev,
-          is_online: data.isOnline ? 1 : 0,
-        }));
-        chatWith.is_online = data.isOnline ? 1 : 0;
+      console.log('user_status_changed reçu:', data);
+      
+      if (data.userId === otherUserId || data.userId === otherUserId.toString()) {
+        const newStatus = data.isOnline === true || data.isOnline === 1;
+       
+        // Mettre à jour le state local
+        setIsUserOnline(newStatus);
+        
+        // Aussi mettre à jour userDetails si il existe
+        setUserDetails((prev: any) => {
+          if (prev) {
+            return {
+              ...prev,
+              is_online: newStatus ? 1 : 0,
+            };
+          }
+          return prev;
+        });
+
+        // Mettre à jour chatWith pour cohérence
+        chatWith.is_online = newStatus ? 1 : 0;
       }
     });
 
@@ -146,10 +171,10 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       
       if (response.success && response.messages) {
         setMessages(response.messages);
-        console.log(`✅ ${response.messages.length} messages chargés`);
+        console.log(`${response.messages.length} messages chargés`);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement messages:', error);
+      console.error('Erreur chargement messages:', error);
       Alert.alert('Erreur', 'Impossible de charger les messages');
     }
   };
@@ -162,11 +187,17 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         const user = response.users.find((u: any) => u.id === otherUserId);
         if (user) {
           setUserDetails(user);
-          console.log('✅ Détails utilisateur chargés');
+          
+          // Mettre à jour le statut avec la valeur de la DB
+          const onlineStatus = user.is_online === 1 || user.is_online === true;
+          setIsUserOnline(onlineStatus);
+          chatWith.is_online = user.is_online;
+          
+          console.log(`Détails utilisateur chargés - Statut: ${onlineStatus ? '🟢 EN LIGNE' : '⚫ HORS LIGNE'}`);
         }
       }
     } catch (error) {
-      console.error('❌ Erreur chargement détails:', error);
+      console.error('Erreur chargement détails:', error);
     }
   };
 
@@ -211,7 +242,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         await sound.playAsync();
       }
     } catch (error) {
-      console.error('❌ Erreur lecture audio:', error);
+      console.error(' Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
@@ -246,7 +277,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       // Envoyer via Socket.io
       socketService.sendPrivateMessage(messageData);
 
-      console.log('✅ Message envoyé');
+      console.log(' Message envoyé');
       
       loadMessages();
 
@@ -254,7 +285,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
-      console.error('❌ Erreur envoi message:', error);
+      console.error(' Erreur envoi message:', error);
       Alert.alert('Erreur', "Impossible d'envoyer le message");
     }
   };
@@ -302,7 +333,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      console.error('❌ Erreur enregistrement:', err);
+      console.error(' Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible de démarrer l'enregistrement");
     }
   };
@@ -329,7 +360,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error('❌ Erreur arrêt enregistrement:', err);
+      console.error(' Erreur arrêt enregistrement:', err);
     }
   };
 
@@ -353,7 +384,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               Alert.alert('Succès', 'La discussion a été vidée pour vous.');
               setShowSettings(false);
             } catch (error) {
-              console.error('❌ Erreur suppression:', error);
+              console.error(' Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de vider la discussion');
             }
           },
@@ -419,9 +450,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     try {
       await deleteMessageLocal(me.id, messageId);
       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
-      console.log('✅ Message masqué localement');
+      console.log(' Message masqué localement');
     } catch (error) {
-      console.error("❌ Erreur suppression locale:", error);
+      console.error(" Erreur suppression locale:", error);
       Alert.alert('Erreur', 'Impossible de supprimer le message');
     }
   };
@@ -443,9 +474,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         )
       );
 
-      console.log('✅ Message supprimé pour tous');
+      console.log(' Message supprimé pour tous');
     } catch (error) {
-      console.error("❌ Erreur suppression pour tous:", error);
+      console.error(" Erreur suppression pour tous:", error);
       Alert.alert("Erreur", "Impossible de supprimer le message.");
     }
   };
@@ -565,7 +596,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           <Text style={styles.status}>
             {isTyping
               ? '✍️ En train d\'écrire...'
-              : (chatWith.is_online ? '🟢 En ligne' : '⚫ Hors ligne')
+              : (isUserOnline ? '🟢 En ligne' : '⚫ Hors ligne')
             }
           </Text>
         </TouchableOpacity>
@@ -684,14 +715,14 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               />
               <View style={[
                 styles.onlineIndicator,
-                { backgroundColor: chatWith.is_online ? '#22c55e' : '#94a3b8' }
+                { backgroundColor: isUserOnline ? '#22c55e' : '#94a3b8' }
               ]} />
             </View>
 
             <View style={styles.profileInfoSection}>
               <Text style={styles.profileName}>{chatWith.username}</Text>
               <Text style={styles.profileStatus}>
-                {chatWith.is_online ? '🟢 En ligne' : '⚫ Hors ligne'}
+                {isUserOnline ? '🟢 En ligne' : '⚫ Hors ligne'}
               </Text>
 
               {userDetails?.bio && userDetails.bio.trim() !== '' ? (
