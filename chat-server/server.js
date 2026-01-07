@@ -60,6 +60,8 @@ function isUserOnline(userId) {
   return onlineUsers.has(userId.toString());
 }
 
+
+
 io.on('connection', async (socket) => {
   console.log(`🔌 Utilisateur connecté: ${socket.id}`);
   
@@ -87,6 +89,7 @@ io.on('connection', async (socket) => {
     io.emit('receive_private_message', data);
     console.log(`Message privé diffusé`);
   });
+  
 
   socket.on('group_message', (data) => {
     console.log(`👥 Message de groupe dans ${data.groupId} par ${data.senderId}`);

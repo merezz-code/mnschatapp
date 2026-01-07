@@ -121,7 +121,7 @@ class SocketService {
     }
   }
 
-  offPrivateMessage() {
+  offPrivateMessage(handlePrivateMessage: () => Promise<void>) {
     if (this.socket) {
       this.socket.off('receive_private_message');
     }
@@ -177,7 +177,7 @@ class SocketService {
     }
   }
 
-  offGroupMessage() {
+  offGroupMessage(handleGroupMessage: () => Promise<void>) {
     if (this.socket) {
       this.socket.off('receive_group_message');
     }
@@ -227,7 +227,7 @@ class SocketService {
     }
   }
 
-  offUserStatusChange() {
+  offUserStatusChange(handleUserStatus: () => Promise<void>) {
     if (this.socket) {
       this.socket.off('user_status_changed');
     }
@@ -273,7 +273,6 @@ class SocketService {
     }
   }
 
-
   /**
    * 👥 Écouter les nouveaux groupes publics
    */
@@ -286,7 +285,7 @@ class SocketService {
   /**
    * 🚫 Arrêter d'écouter les nouveaux groupes publics
    */
-  offNewPublicGroup() {
+  offNewPublicGroup(handleNewPublicGroup: (group: any) => void) {
     if (this.socket) {
       this.socket.off('new_public_group');
     }

@@ -178,7 +178,37 @@ export const deleteMessageLocal = async (userId: string, messageId: number) => {
 export const deleteMessageForAll = async (messageId: number) => {
   return apiRequest(`/private-messages/${messageId}/delete-all`, 'PUT');
 };
+// services/api.js (ou api.ts)
 
+
+
+export const getUnreadCounts = async (userId) => {
+  try {
+    console.log('🔄 getUnreadCounts appelé pour userId:', userId);
+    
+    const url = `${API_URL}/messages/unread-count/${userId}`;
+    console.log('📡 URL:', url);
+    
+    const response = await fetch(url);
+    
+    console.log('📊 HTTP Status:', response.status);
+    
+    if (!response.ok) {
+      console.error('❌ Erreur HTTP:', response.status);
+      return { success: false, counts: [] };
+    }
+    
+    const data = await response.json();
+    console.log('📦 Data reçue du backend:', data);
+    
+    // ✅ Retourner directement data (qui contient déjà success et counts)
+    return data;
+    
+  } catch (error) {
+    console.error('❌ Exception getUnreadCounts:', error);
+    return { success: false, counts: [] };
+  }
+};
 export default {
   // Auth
   registerUser,
@@ -209,4 +239,5 @@ export default {
   getPrivateChats,
   deleteMessageLocal,
   deleteMessageForAll,
+  getUnreadCounts,
 };
