@@ -27,9 +27,12 @@ import {
   removeGroupMember,
   getAllUsers,
   updateGroupName,
-  deleteGroup
+  deleteGroup,
+  deleteGroupMessageLocal,
+  deleteGroupMessageForAll
 } from '../services/api';
 import socketService from '../services/socketService';
+import { API_URL } from '../config/api';
 
 interface ChatRoomViewProps {
   room: any;
@@ -53,6 +56,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -104,14 +108,20 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
 
   const loadMessages = async () => {
     try {
-      const response = await getGroupMessages(room.id.toString());
+      const res = await fetch(`${API_URL}/groups/${room.id}/messages?userId=${me.id}`);
+      const response = await res.json();
       
       if (response.success && response.messages) {
-        setMessages(response.messages);
-        console.log(`✅ ${response.messages.length} messages chargés`);
+        const messagesWithTimestamp = response.messages.map(msg => ({
+          ...msg,
+          timestamp: parseInt(msg.timestamp) || Date.now()
+        }));
+        
+        setMessages(messagesWithTimestamp);
+        console.log(`${messagesWithTimestamp.length} messages chargés`);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement messages:', error);
+      console.error('Erreur chargement messages:', error);
       Alert.alert('Erreur', 'Impossible de charger les messages');
     } finally {
       setLoading(false);
@@ -147,6 +157,151 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
     }
   };
 
+  // ========== FONCTION D'UPLOAD ==========
+  const uploadFile = async (localUri: string, type: 'image' | 'audio' | 'file', fileName: string) => {
+    try {
+      setIsUploading(true);
+
+      // Attendre un peu avant de commencer (évite les conflits)
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const formData = new FormData();
+      
+      let mimeType = 'application/octet-stream';
+      if (type === 'image') {
+        mimeType = localUri.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      } else if (type === 'audio') {
+        mimeType = 'audio/m4a';
+      }
+
+      formData.append('file', {
+        uri: localUri,
+        type: mimeType,
+        name: fileName,
+      } as any);
+
+      console.log('📤 Upload vers:', `${API_URL}/uploads`);
+      console.log('📤 Détails:', { fileName, type, mimeType });
+
+      // Créer une nouvelle requête avec AbortController pour gérer les timeouts
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 secondes timeout
+
+      const response = await fetch(`${API_URL}/uploads`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      console.log('📥 Status HTTP:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Erreur serveur:', errorText);
+        throw new Error(`Erreur HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+      }
+
+      const responseText = await response.text();
+      console.log('📥 Réponse brute:', responseText.substring(0, 200));
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('❌ Erreur parsing JSON:', parseError);
+        console.error('📄 Réponse complète:', responseText);
+        throw new Error('Réponse serveur invalide (pas du JSON)');
+      }
+
+      if (data.success && data.fileUrl) {
+        console.log('✅ Fichier uploadé:', data.fileUrl);
+        return data.fileUrl;
+      } else {
+        throw new Error('Upload échoué: ' + (data.message || 'Raison inconnue'));
+      }
+    } catch (error: any) {
+      console.error('❌ Erreur upload fichier:', error);
+      
+      let errorMessage = "Impossible d'envoyer le fichier";
+      if (error.name === 'AbortError') {
+        errorMessage = 'Timeout: Le serveur met trop de temps à répondre';
+      } else if (error.message?.includes('Network request failed')) {
+        errorMessage = 'Erreur réseau. Vérifiez votre connexion et que le serveur est démarré.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Erreur Upload', errorMessage);
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+// ========== FONCTIONS DE SUPPRESSION ==========
+const showDeleteOptions = (message: any) => {
+  Alert.alert(
+    "Supprimer le message",
+    "Voulez-vous supprimer ce message ?",
+    [
+      {
+        text: "Pour moi",
+        onPress: () => handleDeleteMessageLocal(message.id)
+      },
+      {
+        text: "Pour tous",
+        onPress: () => {
+          if (message.senderId === me.id) {
+            handleDeleteMessageForEveryone(message.id);
+          } else {
+            Alert.alert("Action impossible", "Vous ne pouvez supprimer pour tous que vos propres messages.");
+          }
+        }
+      },
+      { text: "Annuler", style: "cancel" }
+    ]
+  );
+};
+
+const handleDeleteMessageLocal = async (messageId: number) => {
+  try {
+    await deleteGroupMessageLocal(me.id, messageId);
+    setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
+    console.log('🗑️ Message masqué localement');
+  } catch (error) {
+    console.error("❌ Erreur suppression locale:", error);
+    Alert.alert('Erreur', 'Impossible de supprimer le message');
+  }
+};
+
+const handleDeleteMessageForEveryone = async (messageId: number) => {
+  try {
+    await deleteGroupMessageForAll(messageId);
+
+    // Émettre l'événement de suppression via Socket.io
+    socketService.emitDeleteMessage({
+      messageId: messageId,
+      groupId: room.id.toString()
+    });
+
+    setMessages(prevMessages =>
+      prevMessages.map(msg =>
+        msg.id === messageId
+          ? { ...msg, content: 'Ce message a été supprimé', is_deleted: 1 }
+          : msg
+      )
+    );
+
+    console.log('✅ Message supprimé pour tous');
+  } catch (error) {
+    console.error("❌ Erreur suppression pour tous:", error);
+    Alert.alert("Erreur", "Impossible de supprimer le message.");
+  }
+};
   const handleSendMessage = async (
     content: string, 
     type: string = 'text', 
@@ -237,82 +392,117 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
     }
   };
 
-  const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission refusée', "Accès aux photos nécessaire.");
-      return;
+const pickImage = async () => {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') {
+    Alert.alert('Permission refusée', 'Accès aux photos nécessaire.');
+    return;
+  }
+  
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    quality: 0.7,
+  });
+  
+  if (!result.canceled && result.assets[0]) {
+    // Attendre un peu avant l'upload
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    const fileUrl = await uploadFile(result.assets[0].uri, 'image', 'photo.jpg');
+    if (fileUrl) {
+      await handleSendMessage('📷 Image', 'image', 'photo.jpg', fileUrl);
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.7
-    });
-    if (!result.canceled && result.assets && result.assets[0]) {
-      handleSendMessage("📷 Image", 'image', 'photo.jpg', result.assets[0].uri);
-    }
-  };
+  }
+};
 
   const pickDocument = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*' });
     if (!result.canceled && result.assets) {
       const file = result.assets[0];
-      handleSendMessage(`📎 ${file.name}`, 'file', file.name, file.uri);
+      
+      // Attendre un peu avant l'upload
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      const fileUrl = await uploadFile(file.uri, 'file', file.name);
+      if (fileUrl) {
+        await handleSendMessage(`📎 ${file.name}`, 'file', file.name, fileUrl);
+      }
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission refusée', "Accès au microphone nécessaire.");
-        return;
+const startRecording = async () => {
+  try {
+    // Nettoyer tout enregistrement existant avant d'en créer un nouveau
+    if (recordingRef.current) {
+      try {
+        await recordingRef.current.stopAndUnloadAsync();
+      } catch (e) {
+        console.log('Nettoyage enregistrement précédent:', e);
       }
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-
-      recordingRef.current = recording;
-      setIsRecording(true);
-      setRecordingDuration(0);
-
-      durationInterval.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-
-    } catch (err) {
-      console.error('❌ Erreur enregistrement:', err);
-      Alert.alert('Erreur', "Impossible d'enregistrer l'audio");
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!recordingRef.current) return;
-
-    try {
-      setIsRecording(false);
-      if (durationInterval.current) {
-        clearInterval(durationInterval.current);
-      }
-
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-
-      if (uri) {
-        handleSendMessage(`🎤 Message vocal (${recordingDuration}s)`, 'audio', 'audio.m4a', uri);
-      }
-
       recordingRef.current = null;
-      setRecordingDuration(0);
-    } catch (err) {
-      console.error('❌ Erreur arrêt enregistrement:', err);
     }
-  };
+
+    const { status } = await Audio.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission refusée', 'Accès au microphone nécessaire.');
+      return;
+    }
+
+    const { recording } = await Audio.Recording.createAsync(
+      Audio.RecordingOptionsPresets.HIGH_QUALITY
+    );
+
+    recordingRef.current = recording;
+    setIsRecording(true);
+    setRecordingDuration(0);
+
+    durationInterval.current = setInterval(() => {
+      setRecordingDuration((prev) => prev + 1);
+    }, 1000);
+  } catch (err) {
+    console.error('❌ Erreur enregistrement:', err);
+    Alert.alert('Erreur', "Impossible de démarrer l'enregistrement");
+    // Réinitialiser l'état en cas d'erreur
+    setIsRecording(false);
+    recordingRef.current = null;
+  }
+};
+
+const stopRecording = async () => {
+  if (!recordingRef.current) return;
+
+  try {
+    setIsRecording(false);
+    if (durationInterval.current) {
+      clearInterval(durationInterval.current);
+    }
+
+    await recordingRef.current.stopAndUnloadAsync();
+    const uri = recordingRef.current.getURI();
+
+    if (uri) {
+      // Attendre un peu avant l'upload
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      const fileName = `audio_${Date.now()}.m4a`;
+      const fileUrl = await uploadFile(uri, 'audio', fileName);
+      if (fileUrl) {
+        await handleSendMessage(
+          `🎤 Message vocal (${recordingDuration}s)`,
+          'audio',
+          fileName,
+          fileUrl
+        );
+      }
+    }
+
+    recordingRef.current = null;
+    setRecordingDuration(0);
+  } catch (err) {
+    console.error('❌ Erreur arrêt enregistrement:', err);
+    Alert.alert('Erreur', "Impossible d'envoyer le message vocal");
+  }
+};
 
   const handleSaveSettings = async () => {
     try {
@@ -457,95 +647,88 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
     );
   };
 
-  const renderMessage = ({ item }: { item: any }) => {
-    const isMe = item.senderId === me.id;
-    const sender = getUserInfo(item.senderId);
+const renderMessage = ({ item }: { item: any }) => {
+  const isMe = item.senderId === me.id;
+  const sender = getUserInfo(item.senderId);
 
-    return (
-      <View style={[styles.msgWrapper, isMe ? styles.myMsgWrapper : styles.theirMsgWrapper]}>
+  return (
+    <View style={[styles.msgWrapper, isMe ? styles.myMsgWrapper : styles.theirMsgWrapper]}>
+      {!isMe && (
+        <Image source={{ uri: sender.avatar }} style={styles.senderAvatar} />
+      )}
+
+      <TouchableOpacity
+        style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
+        onLongPress={() => showDeleteOptions(item)}
+        delayLongPress={300}
+        activeOpacity={0.8}
+      >
         {!isMe && (
-          <Image source={{ uri: sender.avatar }} style={styles.senderAvatar} />
+          <Text style={styles.senderName}>{sender.username}</Text>
         )}
 
-        <TouchableOpacity
-          style={[styles.bubble, isMe ? styles.myBubble : styles.theirBubble]}
-          onLongPress={() => isMe && handleDeleteMessage(item.id)}
-          delayLongPress={500}
-          activeOpacity={0.9}
-        >
-          {!isMe && (
-            <Text style={styles.senderName}>{sender.username}</Text>
-          )}
+        {/* IMAGE */}
+        {item.type === 'image' && item.imageUrl && (
+          <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
+        )}
 
-          {item.type === 'image' && item.imageUrl && (
-            <Image source={{ uri: item.imageUrl }} style={styles.msgImage} resizeMode="cover" />
-          )}
+        {/* FILE */}
+        {item.type === 'file' && (
+          <View style={styles.fileContainer}>
+            <MaterialIcons name="attach-file" size={20} color={isMe ? "#fff" : "#2563eb"} />
+            <Text style={[styles.fileText, isMe ? styles.myText : styles.theirText]}>
+              {item.fileName || 'Fichier'}
+            </Text>
+          </View>
+        )}
 
-          {item.type === 'file' && (
-            <View style={styles.fileContainer}>
-              <MaterialIcons name="attach-file" size={20} color={isMe ? "#fff" : "#2563eb"} />
-              <Text style={[styles.fileText, isMe ? styles.myText : styles.theirText]}>
-                {item.fileName || 'Fichier'}
+        {/* AUDIO */}
+        {item.type === 'audio' && item.audioUrl && (
+          <View style={styles.audioContainer}>
+            <TouchableOpacity 
+              style={[styles.audioBtn, isMe ? styles.audioBtnMe : styles.audioBtnTheir]}
+              onPress={() => playAudio(item.audioUrl, item.id.toString())}
+              onLongPress={() => showDeleteOptions(item)}
+            >
+              {playingAudio === item.id.toString() ? (
+                <View style={styles.pauseIcon}>
+                  <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
+                  <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
+                </View>
+              ) : (
+                <View style={[styles.playIcon, isMe ? styles.playIconMe : styles.playIconTheir]} />
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.audioProgressContainer}>
+              <View style={[styles.audioProgressBar, isMe ? styles.audioProgressBarMe : styles.audioProgressBarTheir]}>
+                <View style={[
+                  styles.audioProgressFill, 
+                  isMe ? styles.audioProgressFillMe : styles.audioProgressFillTheir,
+                  { width: `${audioProgress[item.id.toString()] || 0}%` }
+                ]} />
+              </View>
+              <Text style={[styles.audioDuration, isMe ? styles.myText : styles.theirText]}>
+                {item.content?.match(/\((\d+)s\)/)?.[1] || '0'}s
               </Text>
             </View>
-          )}
-
-          {item.type === 'audio' && item.audioUrl && (
-            <View style={styles.audioContainer}>
-              <TouchableOpacity 
-                style={[styles.audioBtn, isMe ? styles.audioBtnMe : styles.audioBtnTheir]}
-                onPress={() => playAudio(item.audioUrl, item.id.toString())}
-              >
-                {playingAudio === item.id.toString() ? (
-                  <View style={styles.pauseIcon}>
-                    <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
-                    <View style={[styles.pauseBar, isMe ? styles.pauseBarMe : styles.pauseBarTheir]} />
-                  </View>
-                ) : (
-                  <View style={[styles.playIcon, isMe ? styles.playIconMe : styles.playIconTheir]} />
-                )}
-              </TouchableOpacity>
-
-              <View style={styles.audioProgressContainer}>
-                <View style={[styles.audioProgressBar, isMe ? styles.audioProgressBarMe : styles.audioProgressBarTheir]}>
-                  <View style={[
-                    styles.audioProgressFill, 
-                    isMe ? styles.audioProgressFillMe : styles.audioProgressFillTheir,
-                    { width: `${audioProgress[item.id.toString()] || 0}%` }
-                  ]} />
-                </View>
-                <Text style={[styles.audioDuration, isMe ? styles.myText : styles.theirText]}>
-                  {item.content?.match(/\((\d+)s\)/)?.[1] || '0'}s
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {item.type !== 'audio' && (
-            <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
-              {item.content}
-            </Text>
-          )}
-
-          <View style={styles.bottomRow}>
-            <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
-              {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </Text>
-
-            {isMe && (
-              <TouchableOpacity
-                onPress={() => handleDeleteMessage(item.id)}
-                style={styles.trashTouch}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <MaterialIcons name="delete-outline" size={16} color="rgba(255,255,255,0.8)" />
-              </TouchableOpacity>
-            )}
           </View>
-        </TouchableOpacity>
-      </View>
-    );
-  };
+        )}
+
+        {/* TEXTE */}
+        {item.type !== 'audio' && (
+          <Text style={[styles.msgText, isMe ? styles.myText : styles.theirText]}>
+            {item.content}
+          </Text>
+        )}
+
+        <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
+          {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
   if (loading) {
     return (
@@ -560,6 +743,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
@@ -582,6 +766,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
         </TouchableOpacity>
       </View>
 
+      {/* Liste des messages */}
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -591,6 +776,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
       />
 
+      {/* Zone d'envoi */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
@@ -644,6 +830,14 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
           )}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Indicateur d'upload */}
+      {isUploading && (
+        <View style={styles.uploadingContainer}>
+          <ActivityIndicator size="small" color="#2563eb" />
+          <Text style={styles.uploadingText}>Upload en cours...</Text>
+        </View>
+      )}
 
       {/* Modal liste des membres */}
       <Modal visible={showMembers} animationType="slide" transparent={true}>
@@ -806,6 +1000,7 @@ const ChatRoomView: React.FC<ChatRoomViewProps> = ({ room, me, onBack, isDarkMod
   );
 };
 
+// Styles (les mêmes que précédemment + ajout de uploadingContainer)
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   loadingContainer: {
@@ -1041,6 +1236,19 @@ const styles = StyleSheet.create({
   },
   stopBtn: {
     padding: 8,
+  },
+  uploadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#eff6ff',
+    gap: 10,
+  },
+  uploadingText: {
+    color: '#2563eb',
+    fontSize: 14,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,

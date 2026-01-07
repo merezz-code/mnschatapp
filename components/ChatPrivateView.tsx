@@ -11,6 +11,7 @@ import {
   Platform,
   Modal,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -38,7 +39,7 @@ import {
 } from '../services/api';
 import socketService from '../services/socketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL } from '../config/api';
+import { API_URL, SERVER_URL } from '../config/api';
 
 
 interface ChatPrivateViewProps {
@@ -66,9 +67,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [audioProgress, setAudioProgress] = useState<{ [key: string]: number }>({});
   const [isTyping, setIsTyping] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isBlocked, setIsBlocked] = useState(false);
-  //Initialisation du statut (gérer les types number et boolean)
   const [isUserOnline, setIsUserOnline] = useState<boolean>(
     chatWith.is_online === 1 || chatWith.is_online === true
   );
@@ -79,18 +80,17 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const otherUserId = chatWith.id;
+
   const checkBlock = async () => {
-  try {
-    const res = await fetch(`${API_URL}/blocks/check/${me.id}/${otherUserId}`);
-    const text = await res.text();  // <- voir ce que le serveur renvoie
-    console.log('Réponse brute:', text);
-    const data = JSON.parse(text);  // ou res.json() si c’est bien du JSON
-    setIsBlocked(data.blocked);
-    await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
-  } catch (error) {
-    console.error('Erreur checkBlock:', error);
-  }
-};
+    try {
+      const res = await fetch(`${API_URL}/blocks/check/${me.id}/${otherUserId}`);
+      const data = await res.json();
+      setIsBlocked(data.blocked);
+      await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
+    } catch (error) {
+      console.error('Erreur checkBlock:', error);
+    }
+  };
 
   const loadBlockStatus = async () => {
     try {
@@ -100,7 +100,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       await AsyncStorage.setItem(`blocked_${otherUserId}`, data.blocked ? 'true' : 'false');
     } catch (error) {
       console.error('Erreur checkBlock:', error);
-      // fallback sur le cache si l'API échoue
       const cached = await AsyncStorage.getItem(`blocked_${otherUserId}`);
       if (cached !== null) setIsBlocked(cached === 'true');
     }
@@ -120,14 +119,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
 
     init();
 
-
-    //Vérifier le statut en temps réel via socket
     socketService.checkUserStatus(otherUserId, (data) => {
       console.log(`🔍 Statut reçu du serveur:`, data);
       setIsUserOnline(data.isOnline);
     });
 
-    // Écouter les nouveaux messages en temps réel
     socketService.onPrivateMessage((message) => {
       if (
         (message.senderId === me.id && message.receiverId === otherUserId) ||
@@ -142,13 +138,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       }
     });
 
-    // Écouter quand l'autre supprime un message
     socketService.onMessageDeleted((data) => {
-      console.log('🗑️ Message supprimé reçu via socket');
+      console.log('Message supprimé reçu via socket');
       loadMessages();
     });
 
-    // Écouter quand l'autre personne tape
     socketService.onTyping((data) => {
       if (data.senderId === otherUserId) {
         setIsTyping(data.isTyping);
@@ -167,17 +161,14 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       Alert.alert('Message bloqué', 'Vous êtes bloqué par cet utilisateur.');
     });
 
-    // Écouter les changements de statut
     socketService.onUserStatusChange((data) => {
       console.log('user_status_changed reçu:', data);
 
       if (data.userId === otherUserId || data.userId === otherUserId.toString()) {
-        const newStatus = data.isOnline === true || data.isOnline === 1;
+        const newStatus = Boolean(data.isOnline);
 
-        // Mettre à jour le state local
         setIsUserOnline(newStatus);
 
-        // Aussi mettre à jour userDetails si il existe
         setUserDetails((prev: any) => {
           if (prev) {
             return {
@@ -188,7 +179,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           return prev;
         });
 
-        // Mettre à jour chatWith pour cohérence
         chatWith.is_online = newStatus ? 1 : 0;
       }
     });
@@ -209,19 +199,24 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     };
   }, [otherUserId]);
 
-  const loadMessages = async () => {
-    try {
-      const response = await getPrivateMessages(me.id, otherUserId);
+const loadMessages = async () => {
+  try {
+    const response = await getPrivateMessages(me.id, otherUserId);
 
-      if (response.success && response.messages) {
-        setMessages(response.messages);
-        console.log(`${response.messages.length} messages chargés`);
-      }
-    } catch (error) {
-      console.error('Erreur chargement messages:', error);
-      Alert.alert('Erreur', 'Impossible de charger les messages');
+    if (response.success && response.messages) {
+      const messagesWithTimestamp = response.messages.map(msg => ({
+        ...msg,
+        timestamp: parseInt(msg.timestamp) || Date.now()
+      }));
+      
+      setMessages(messagesWithTimestamp);
+      console.log(`${messagesWithTimestamp.length} messages chargés`);
     }
-  };
+  } catch (error) {
+    console.error('Erreur chargement messages:', error);
+    Alert.alert('Erreur', 'Impossible de charger les messages');
+  }
+};
 
   const loadUserDetails = async () => {
     try {
@@ -232,7 +227,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         if (user) {
           setUserDetails(user);
 
-          // Mettre à jour le statut avec la valeur de la DB
           const onlineStatus = user.is_online === 1 || user.is_online === true;
           setIsUserOnline(onlineStatus);
           chatWith.is_online = user.is_online;
@@ -244,6 +238,93 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       console.error('Erreur chargement détails:', error);
     }
   };
+
+const uploadFile = async (localUri: string, type: 'image' | 'audio' | 'file', fileName: string) => {
+  try {
+    setIsUploading(true);
+
+    // Attendre un peu avant de commencer (évite les conflits)
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const formData = new FormData();
+    
+    let mimeType = 'application/octet-stream';
+    if (type === 'image') {
+      mimeType = localUri.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    } else if (type === 'audio') {
+      mimeType = 'audio/m4a';
+    }
+
+    // IMPORTANT: Utiliser un objet compatible avec React Native
+    formData.append('file', {
+      uri: localUri,
+      type: mimeType,
+      name: fileName,
+    } as any);
+
+    console.log('📤 Upload vers:', `${API_URL}/uploads`);
+    console.log('📤 Détails:', { fileName, type, mimeType, uri: localUri.substring(0, 50) });
+
+    // Créer une nouvelle requête avec AbortController pour gérer les timeouts
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 secondes timeout
+
+    const response = await fetch(`${API_URL}/uploads`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Accept': 'application/json',
+        // PAS de Content-Type - laissez FormData le gérer
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    console.log('📥 Status HTTP:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Erreur serveur:', errorText);
+      throw new Error(`Erreur HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+    }
+
+    const responseText = await response.text();
+    console.log('📥 Réponse brute:', responseText.substring(0, 200));
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ Erreur parsing JSON:', parseError);
+      console.error('📄 Réponse complète:', responseText);
+      throw new Error('Réponse serveur invalide (pas du JSON)');
+    }
+
+    if (data.success && data.fileUrl) {
+      console.log('✅ Fichier uploadé:', data.fileUrl);
+      return data.fileUrl;
+    } else {
+      throw new Error('Upload échoué: ' + (data.message || 'Raison inconnue'));
+    }
+  } catch (error: any) {
+    console.error('❌ Erreur upload fichier:', error);
+    
+    let errorMessage = "Impossible d'envoyer le fichier";
+    if (error.name === 'AbortError') {
+      errorMessage = 'Timeout: Le serveur met trop de temps à répondre';
+    } else if (error.message?.includes('Network request failed')) {
+      errorMessage = 'Erreur réseau. Vérifiez votre connexion et que le serveur est démarré.';
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    
+    Alert.alert('Erreur Upload', errorMessage);
+    return null;
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   const playAudio = async (uri: string, messageId: string) => {
     try {
@@ -286,7 +367,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         await sound.playAsync();
       }
     } catch (error) {
-      console.error(' Erreur lecture audio:', error);
+      console.error('Erreur lecture audio:', error);
       Alert.alert('Erreur', 'Impossible de lire le message vocal');
       setPlayingAudio(null);
     }
@@ -299,9 +380,9 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     fileUrl: string | null = null
   ) => {
     if (isBlocked) {
-    Alert.alert('Action impossible', 'Vous ne pouvez pas envoyer de messages à cet utilisateur.');
-    return;
-  }
+      Alert.alert('Action impossible', 'Vous ne pouvez pas envoyer de messages à cet utilisateur.');
+      return;
+    }
     if (type === 'text' && !content.trim()) return;
 
     try {
@@ -319,10 +400,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         timestamp,
       };
 
-      // Sauvegarder dans la DB via API
       await sendPrivateMessage(messageData);
-
-      // Envoyer via Socket.io
       socketService.sendPrivateMessage(messageData);
 
       console.log(' Message envoyé');
@@ -338,31 +416,52 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     }
   };
 
-  const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission refusée', 'Accès aux photos nécessaire.');
-      return;
+const pickImage = async () => {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') {
+    Alert.alert('Permission refusée', 'Accès aux photos nécessaire.');
+    return;
+  }
+  
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    quality: 0.7,
+  });
+  
+  if (!result.canceled && result.assets[0]) {
+    // Attendre un peu avant l'upload
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    const fileUrl = await uploadFile(result.assets[0].uri, 'image', 'photo.jpg');
+    if (fileUrl) {
+      await handleSendMessage('📷 Image', 'image', 'photo.jpg', fileUrl);
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]) {
-      handleSendMessage('📷 Image', 'image', 'photo.jpg', result.assets[0].uri);
-    }
-  };
+  }
+};
 
   const pickDocument = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*' });
     if (!result.canceled && result.assets) {
       const file = result.assets[0];
-      handleSendMessage(`📎 ${file.name}`, 'file', file.name, file.uri);
+      const fileUrl = await uploadFile(file.uri, 'file', file.name);
+      if (fileUrl) {
+        await handleSendMessage(`📎 ${file.name}`, 'file', file.name, fileUrl);
+      }
     }
   };
 
-  const startRecording = async () => {
+const startRecording = async () => {
     try {
+      // Nettoyer tout enregistrement existant avant d'en créer un nouveau
+      if (recordingRef.current) {
+        try {
+          await recordingRef.current.stopAndUnloadAsync();
+        } catch (e) {
+          console.log('Nettoyage enregistrement précédent:', e);
+        }
+        recordingRef.current = null;
+      }
+
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission refusée', 'Accès au microphone nécessaire.');
@@ -381,8 +480,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      console.error(' Erreur enregistrement:', err);
+      console.error('❌ Erreur enregistrement:', err);
       Alert.alert('Erreur', "Impossible de démarrer l'enregistrement");
+      // Réinitialiser l'état en cas d'erreur
+      setIsRecording(false);
+      recordingRef.current = null;
     }
   };
 
@@ -397,18 +499,26 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
       const uri = recordingRef.current.getURI();
 
       if (uri) {
-        handleSendMessage(
-          `🎤 Message vocal (${recordingDuration}s)`,
-          'audio',
-          `audio_${Date.now()}.m4a`,
-          uri
-        );
+        // Attendre un peu avant l'upload
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        const fileName = `audio_${Date.now()}.m4a`;
+        const fileUrl = await uploadFile(uri, 'audio', fileName);
+        if (fileUrl) {
+          await handleSendMessage(
+            `🎤 Message vocal (${recordingDuration}s)`,
+            'audio',
+            fileName,
+            fileUrl
+          );
+        }
       }
 
       recordingRef.current = null;
       setRecordingDuration(0);
     } catch (err) {
-      console.error(' Erreur arrêt enregistrement:', err);
+      console.error('❌ Erreur arrêt enregistrement:', err);
+      Alert.alert('Erreur', "Impossible d'envoyer le message vocal");
     }
   };
 
@@ -423,7 +533,6 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
           style: 'destructive',
           onPress: async () => {
             try {
-              // Supprimer localement tous les messages
               for (const msg of messages) {
                 await deleteMessageLocal(me.id, msg.id);
               }
@@ -432,7 +541,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               Alert.alert('Succès', 'La discussion a été vidée pour vous.');
               setShowSettings(false);
             } catch (error) {
-              console.error(' Erreur suppression:', error);
+              console.error('Erreur suppression:', error);
               Alert.alert('Erreur', 'Impossible de vider la discussion');
             }
           },
@@ -558,12 +667,27 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleTimeString([], {
+// Remplacez la fonction formatTime par celle-ci :
+const formatTime = (timestamp: number) => {
+  if (!timestamp || isNaN(timestamp)) {
+    return '--:--';
+  }
+  
+  try {
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) {
+      return '--:--';
+    }
+    
+    return date.toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     });
-  };
+  } catch (error) {
+    console.error('Erreur formatage time:', error);
+    return '--:--';
+  }
+};
 
   const renderMessage = ({ item }: { item: any }) => {
     const isMe = item.senderId === me.id;
@@ -639,9 +763,11 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
             </Text>
           )}
 
-          <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
-            {formatTime(item.timestamp)}
-          </Text>
+          {item.timestamp && !isNaN(item.timestamp) && (
+            <Text style={[styles.msgTime, isMe ? styles.myTime : styles.theirTime]}>
+              {formatTime(item.timestamp)}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
     );
@@ -767,7 +893,7 @@ const ChatPrivateView: React.FC<ChatPrivateViewProps> = ({
               <Trash2 size={22} color="#f97316" />
               <Text style={styles.clearBtnText}>Vider la discussion</Text>
             </TouchableOpacity>
-
+            
             <TouchableOpacity style={styles.blockBtn} onPress={isBlocked ? handleUnblockUser : handleBlockUser}>
               <UserX size={22} color="#ef4444" />
               <Text style={styles.blockBtnText}>{isBlocked ? 'Débloquer' : 'Bloquer'} {chatWith.username}</Text>
@@ -1007,6 +1133,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     opacity: 0.8,
+  },
+  uploadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#eff6ff',
+    gap: 10,
+  },
+  uploadingText: {
+    color: '#2563eb',
+    fontSize: 14,
+    fontWeight: '600',
   },
   inputSection: {
     flexDirection: 'row',

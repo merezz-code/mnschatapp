@@ -2,32 +2,60 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+
 const routes = require('./routes');
 const { query } = require('./databases/db');
 require('dotenv').config();
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Configuration pour gérer plusieurs uploads simultanés
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Accept'],
+}));
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+const server = http.createServer(app);
+
+// Augmenter les limites de connexions
+server.timeout = 120000;
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 70000; //70 s
+
+// Monter les routes API
 app.use('/api', routes);
+
+// Créer le dossier uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('📁 Dossier uploads créé dans server.js');
+}
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.get('/', (req, res) => {
   res.json({ message: 'Chat API Server Running', status: 'OK' });
 });
 
-const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST'],
   },
 });
+module.exports = { io };
 
 const onlineUsers = new Map();
 const userGroups = new Map();
 
-//HELPER pour vérifier si un user est en ligne
+// HELPER pour vérifier si un user est en ligne
 function isUserOnline(userId) {
   return onlineUsers.has(userId.toString());
 }
@@ -141,7 +169,6 @@ io.on('connection', async (socket) => {
     console.log(`${offlineUserId} est maintenant hors ligne`);
   });
 
-  // Vérifier le statut d'un utilisateur
   socket.on('check_user_status', (targetUserId) => {
     const status = isUserOnline(targetUserId);
     console.log(`🔍 Vérification statut de ${targetUserId}: ${status ? 'EN LIGNE' : 'HORS LIGNE'}`);
@@ -179,6 +206,7 @@ io.on('connection', async (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Serveur Socket.io + API démarré sur le port ${PORT}`);
-  console.log(`📡 API: http://localhost:${PORT}/api`);
-  console.log(`🔌 Socket.io: http://localhost:${PORT}`);
+  console.log(`📡 API: http://0.0.0.0:${PORT}/api`);
+  console.log(`🔌 Socket.io: http://0.0.0.0:${PORT}`);
+  console.log(`📁 Uploads: http://0.0.0.0:${PORT}/uploads`);
 });
