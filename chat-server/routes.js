@@ -2,6 +2,19 @@ const express = require('express');
 const { query } = require('./databases/db');
 const router = express.Router();
 const { io } = require('./server');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
+
+const uploadsDir = path.join(__dirname, 'uploads');
+console.log('📁 Chemin uploads:', uploadsDir);
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('✅ Dossier uploads créé');
+}
+
 // ============ USERS ============
 
 // Inscription
@@ -18,7 +31,6 @@ router.post('/auth/register', async (req, res) => {
       });
     }
 
-    // Vérifier si l'email existe déjà
     const existingUser = await query(
       'SELECT id FROM users WHERE email = $1',
       [email]
@@ -34,10 +46,9 @@ router.post('/auth/register', async (req, res) => {
     const userId = Math.random().toString(36).substring(2, 11);
     const avatar = `https://i.pravatar.cc/150?u=${userId}`;
 
-    // Le mot de passe est déjà hashé côté client
     const result = await query(
       `INSERT INTO users (id, username, email, password, avatar, bio) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [userId, username, email, password, avatar, 'Disponible']
     );
 
@@ -64,7 +75,6 @@ router.post('/auth/login', async (req, res) => {
       });
     }
 
-    // Le mot de passe est déjà hashé côté client
     const result = await query(
       'SELECT * FROM users WHERE email = $1 AND password = $2 LIMIT 1',
       [email, password]
@@ -104,28 +114,138 @@ router.put('/users/:userId', async (req, res) => {
   }
 });
 
-// Récupérer tous les utilisateurs (pour contacts)
+// Récupérer tous les utilisateurs
 router.get('/users', async (req, res) => {
   try {
-    const result = await query('SELECT id, username, email,  avatar, is_online, password, bio FROM users');
+    const result = await query('SELECT id, username, email, avatar, is_online, password, bio FROM users');
     res.json({ success: true, users: result.rows });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// ============ UPLOAD FILES ============
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, './uploads');
+    
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, `file_${uniqueSuffix}${ext}`);
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: { 
+    fileSize: 50 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/m4a',
+      'audio/wav',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Type de fichier non autorisé'));
+    }
+  }
+});
+
+router.post('/uploads', upload.single('file'), async (req, res) => {
+  try {
+    console.log('=== NOUVELLE REQUÊTE UPLOAD ===');
+    console.log('📥 Timestamp:', new Date().toISOString());
+    
+    if (!req.file) {
+      console.error('❌ Aucun fichier dans la requête');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Aucun fichier fourni' 
+      });
+    }
+
+    console.log('📁 Détails fichier:', {
+      originalname: req.file.originalname,
+      filename: req.file.filename,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+
+    if (!fs.existsSync(req.file.path)) {
+      console.error('❌ Fichier non trouvé sur disque');
+      return res.status(500).json({
+        success: false,
+        message: 'Erreur: fichier non sauvegardé'
+      });
+    }
+
+    const host = process.env.EXPO_PUBLIC_API_HOST || 'localhost';
+    const port = process.env.EXPO_PUBLIC_API_PORT || '3000';
+    const fileUrl = `http://${host}:${port}/uploads/${req.file.filename}`;
+
+    console.log('✅ Fichier uploadé:', fileUrl);
+
+    res.json({
+      success: true,
+      fileUrl: fileUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype
+    });
+  } catch (error) {
+    console.error('❌ Erreur upload:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur serveur lors de l\'upload',
+      error: error.message 
+    });
+  }
+});
+
+router.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Fichier trop volumineux (max 50MB)'
+      });
+    }
+  }
+  next(error);
+});
+
 // ============ GROUPS ============
 
-// Récupérer les groupes d'un utilisateur
 router.get('/groups/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
 
     const result = await query(
       `SELECT g.* FROM groups g
-       JOIN group_members gm ON g.id = gm.group_id
-       WHERE gm.user_id = $1
-       ORDER BY g.last_update DESC`,
+      JOIN group_members gm ON g.id = gm.group_id
+      WHERE gm.user_id = $1
+      ORDER BY g.last_update DESC`,
       [userId]
     );
 
@@ -135,7 +255,6 @@ router.get('/groups/user/:userId', async (req, res) => {
   }
 });
 
-// Créer un groupe
 router.post('/groups', async (req, res) => {
   try {
     const { name, createdBy, isPrivate } = req.body;
@@ -143,20 +262,19 @@ router.post('/groups', async (req, res) => {
 
     const groupResult = await query(
       `INSERT INTO groups (name, avatar, is_private, created_by, last_update) 
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [name, `https://picsum.photos/seed/${name}/200`, isPrivate ? 1 : 0, createdBy, timestamp]
     );
 
     const groupId = groupResult.rows[0].id;
 
-    // Ajouter le créateur comme admin
     await query(
       'INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, $3)',
       [groupId, createdBy, 'admin']
     );
+    
     if (!isPrivate && io) {
-      io.emit('new_public_group', groupResult.rows[0]); // même nom que le client
-
+      io.emit('new_public_group', groupResult.rows[0]);
     }
 
     res.json({ success: true, group: groupResult.rows[0] });
@@ -165,7 +283,6 @@ router.post('/groups', async (req, res) => {
   }
 });
 
-// Supprimer un groupe
 router.delete('/groups/:groupId', async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -176,7 +293,6 @@ router.delete('/groups/:groupId', async (req, res) => {
   }
 });
 
-// Mettre à jour le nom du groupe
 router.put('/groups/:groupId', async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -193,9 +309,19 @@ router.put('/groups/:groupId', async (req, res) => {
   }
 });
 
+router.get('/groupes', async (req, res) => {
+  try {
+    const result = await query(
+      'SELECT * FROM groups WHERE is_private = 0 ORDER BY last_update DESC'
+    );
+    res.json({ success: true, groups: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ============ GROUP MEMBERS ============
 
-// Récupérer les membres d'un groupe
 router.get('/groups/:groupId/members', async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -211,7 +337,6 @@ router.get('/groups/:groupId/members', async (req, res) => {
   }
 });
 
-// Ajouter un membre au groupe
 router.post('/groups/:groupId/members', async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -228,7 +353,6 @@ router.post('/groups/:groupId/members', async (req, res) => {
   }
 });
 
-// Retirer un membre du groupe
 router.delete('/groups/:groupId/members/:userId', async (req, res) => {
   try {
     const { groupId, userId } = req.params;
@@ -246,52 +370,105 @@ router.delete('/groups/:groupId/members/:userId', async (req, res) => {
 
 // ============ GROUP MESSAGES ============
 
-// Récupérer les messages d'un groupe
+// GET: Récupérer les messages d'un groupe
 router.get('/groups/:groupId/messages', async (req, res) => {
   try {
     const { groupId } = req.params;
+    const { userId } = req.query;
 
-    const result = await query(
-      `SELECT id, group_id as "roomId", sender_id as "senderId", content, type,
-              file_name as "fileName", file_url as "fileUrl", 
-              image_url as "imageUrl", audio_url as "audioUrl", timestamp
-       FROM group_messages 
-       WHERE group_id = $1 
-       ORDER BY timestamp ASC`,
-      [groupId]
-    );
+    let queryText = `
+      SELECT id, group_id as "roomId", sender_id as "senderId", content, type,
+            file_name as "fileName", file_url as "fileUrl", 
+            image_url as "imageUrl", audio_url as "audioUrl", timestamp, is_deleted
+      FROM group_messages 
+      WHERE group_id = $1
+    `;
+
+    const params = [groupId];
+
+    if (userId) {
+      queryText += ` AND id NOT IN (SELECT message_id FROM deleted_group_messages WHERE user_id = $2)`;
+      params.push(userId);
+    }
+
+    queryText += ` ORDER BY timestamp ASC`;
+
+    const result = await query(queryText, params);
 
     res.json({ success: true, messages: result.rows });
   } catch (error) {
+    console.error('❌ Erreur récupération messages groupe:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Enregistrer un message de groupe
+// POST: Envoyer un message de groupe
 router.post('/groups/:groupId/messages', async (req, res) => {
   try {
     const { groupId } = req.params;
     const { senderId, content, type, fileName, fileUrl, imageUrl, audioUrl, timestamp } = req.body;
 
+    console.log('📩 Message de groupe reçu:', { 
+      groupId, 
+      senderId, 
+      type, 
+      content: content?.substring(0, 50) 
+    });
+
     await query(
       `INSERT INTO group_messages 
-       (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      (group_id, sender_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [groupId, senderId, content, type, fileName, fileUrl, imageUrl, audioUrl, timestamp]
     );
 
-    // Mettre à jour last_update du groupe
     await query('UPDATE groups SET last_update = $1 WHERE id = $2', [timestamp, groupId]);
+
+    console.log('✅ Message de groupe enregistré');
 
     res.json({ success: true });
   } catch (error) {
+    console.error('❌ Erreur enregistrement message groupe:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ GROUP MESSAGE DELETION ============
+
+router.post('/groups/messages/delete-local', async (req, res) => {
+  try {
+    const { userId, messageId } = req.body;
+
+    await query(
+      'INSERT INTO deleted_group_messages (user_id, message_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [userId, messageId]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur suppression locale message groupe:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/groups/messages/:messageId/delete-all', async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    await query(
+      `UPDATE group_messages SET content = $1, is_deleted = 1 WHERE id = $2`,
+      ['Ce message a été supprimé', messageId]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur suppression message groupe pour tous:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // ============ PRIVATE MESSAGES ============
 
-// Récupérer les messages privés entre deux utilisateurs
 router.get('/private-messages/:userId1/:userId2', async (req, res) => {
   try {
     const { userId1, userId2 } = req.params;
@@ -300,10 +477,10 @@ router.get('/private-messages/:userId1/:userId2', async (req, res) => {
       `SELECT id, sender_id as "senderId", receiver_id as "receiverId", 
               content, type, file_name as "fileName", file_url as "fileUrl",
               image_url as "imageUrl", audio_url as "audioUrl", timestamp, is_deleted
-       FROM private_messages 
-       WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-       AND id NOT IN (SELECT message_id FROM deleted_messages WHERE user_id = $1)
-       ORDER BY timestamp ASC`,
+      FROM private_messages 
+      WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+      AND id NOT IN (SELECT message_id FROM deleted_messages WHERE user_id = $1)
+      ORDER BY timestamp ASC`,
       [userId1, userId2]
     );
 
@@ -313,12 +490,10 @@ router.get('/private-messages/:userId1/:userId2', async (req, res) => {
   }
 });
 
-// Envoyer un message privé
 router.post('/private-messages', async (req, res) => {
   try {
     const { senderId, receiverId, content, type, fileName, fileUrl, imageUrl, audioUrl, timestamp } = req.body;
 
-    // VÉRIFIER que les utilisateurs existent
     const users = await query('SELECT id FROM users WHERE id = $1 OR id = $2', [senderId, receiverId]);
 
     if (users.rows.length !== 2) {
@@ -331,8 +506,8 @@ router.post('/private-messages', async (req, res) => {
 
     await query(
       `INSERT INTO private_messages 
-       (sender_id, receiver_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      (sender_id, receiver_id, content, type, file_name, file_url, image_url, audio_url, timestamp) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [senderId, receiverId, content, type, fileName, fileUrl, imageUrl, audioUrl, timestamp]
     );
 
@@ -343,7 +518,6 @@ router.post('/private-messages', async (req, res) => {
   }
 });
 
-// Récupérer les conversations privées d'un utilisateur
 router.get('/private-chats/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -367,7 +541,6 @@ router.get('/private-chats/:userId', async (req, res) => {
   }
 });
 
-// Supprimer un message pour un utilisateur
 router.post('/private-messages/delete-local', async (req, res) => {
   try {
     const { userId, messageId } = req.body;
@@ -383,7 +556,6 @@ router.post('/private-messages/delete-local', async (req, res) => {
   }
 });
 
-// Supprimer un message pour tous
 router.put('/private-messages/:messageId/delete-all', async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -398,20 +570,9 @@ router.put('/private-messages/:messageId/delete-all', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-// Récupérer tous les groupes publics (Discover)
-router.get('/groupes', async (req, res) => {
-  try {
-    const result = await query(
-      'SELECT * FROM groups WHERE is_private = 0 ORDER BY last_update DESC'
-    );
-    res.json({ success: true, groups: result.rows });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+
 // ============ BLOCKS ============
 
-// Vérifier si un utilisateur a bloqué un autre
 router.get('/blocks/check/:me/:other', async (req, res) => {
   try {
     const { me, other } = req.params;
@@ -428,14 +589,13 @@ router.get('/blocks/check/:me/:other', async (req, res) => {
   }
 });
 
-// Bloquer un utilisateur
 router.post('/blocks', async (req, res) => {
   try {
     const { blockerId, blockedId } = req.body;
 
     await query(
       `INSERT INTO blocks (blocker_id, blocked_id, created_at)
-       VALUES ($1, $2, NOW())`,
+      VALUES ($1, $2, NOW())`,
       [blockerId, blockedId]
     );
 
@@ -446,8 +606,6 @@ router.post('/blocks', async (req, res) => {
   }
 });
 
-
-// Débloquer un utilisateur
 router.delete('/blocks', async (req, res) => {
   try {
     const { blockerId, blockedId } = req.body;
@@ -463,6 +621,5 @@ router.delete('/blocks', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 module.exports = router;

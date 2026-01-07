@@ -86,10 +86,77 @@ export const getGroupMessages = async (groupId: string) => {
   return apiRequest(`/groups/${groupId}/messages`);
 };
 
-export const saveGroupMessage = async (msg: any) => {
-  return apiRequest(`/groups/${msg.groupId}/messages`, 'POST', msg);
+// Dans api.ts, remplace la fonction saveGroupMessage par :
+export const saveGroupMessage = async (messageData: any) => {
+  try {
+    console.log('📤 Envoi message groupe:', {
+      groupId: messageData.groupId,
+      type: messageData.type,
+      content: messageData.content?.substring(0, 50)
+    });
+
+    const response = await fetch(`${API_URL}/groups/${messageData.groupId}/messages`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(messageData)
+    });
+
+    console.log('📥 Status HTTP:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Erreur serveur:', errorText);
+      throw new Error(`Erreur HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+    }
+
+    const responseText = await response.text();
+    console.log('📥 Réponse brute:', responseText.substring(0, 200));
+
+    // Vérifier si la réponse est vide
+    if (!responseText || responseText.trim() === '') {
+      console.log('✅ Message enregistré (réponse vide OK)');
+      return { success: true };
+    }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ Erreur parsing JSON:', parseError);
+      console.error('📄 Réponse complète:', responseText);
+      
+      // Si la réponse contient du HTML, c'est probablement une erreur serveur
+      if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
+        throw new Error('Le serveur a renvoyé du HTML au lieu de JSON. Vérifiez les logs serveur.');
+      }
+      
+      throw new Error('Réponse serveur invalide (pas du JSON)');
+    }
+
+    if (data.success === false) {
+      throw new Error(data.error || 'Erreur serveur inconnue');
+    }
+
+    console.log('✅ Message groupe enregistré avec succès');
+    return data;
+  } catch (error: any) {
+    console.error('❌ Erreur API /groups/:groupId/messages:', error);
+    throw error;
+  }
 };
 
+// ============ GROUP MESSAGE DELETION ============
+
+export const deleteGroupMessageLocal = async (userId: string, messageId: number) => {
+  return apiRequest('/groups/messages/delete-local', 'POST', { userId, messageId });
+};
+
+export const deleteGroupMessageForAll = async (messageId: number) => {
+  return apiRequest(`/groups/messages/${messageId}/delete-all`, 'PUT');
+};
 // ============ PRIVATE MESSAGES ============
 
 export const getPrivateMessages = async (userId1: string, userId2: string) => {
@@ -133,6 +200,8 @@ export default {
   // Group Messages
   getGroupMessages,
   saveGroupMessage,
+  deleteGroupMessageLocal,
+  deleteGroupMessageForAll,
   
   // Private Messages
   getPrivateMessages,

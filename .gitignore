@@ -2,7 +2,8 @@
 
 # dependencies
 node_modules/
-
+/chat-server/uploads
+/chat-server/.env
 # Expo
 .expo/
 dist/

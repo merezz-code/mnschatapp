@@ -96,7 +96,7 @@ export default function MainApp({ me, onLogout }: MainAppProps) {
       
       if (me && me.id) {
         socketService.setUserOffline(me.id);
-        socketService.removeAllListeners();
+        // socketService.removeAllListeners();
         socketService.disconnect();
       }
     };

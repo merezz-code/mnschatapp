@@ -103,3 +103,16 @@ CREATE TABLE IF NOT EXISTS deleted_messages (
     deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, message_id)
 );
+
+CREATE TABLE IF NOT EXISTS deleted_group_messages (
+  id SERIAL PRIMARY KEY,
+  user_id VARCHAR(50) NOT NULL,
+  message_id INTEGER NOT NULL,
+  deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, message_id)
+);
+
+CREATE INDEX idx_deleted_group_messages_user_id ON deleted_group_messages(user_id);
+CREATE INDEX idx_deleted_group_messages_message_id ON deleted_group_messages(message_id);
+
+ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS is_deleted INTEGER DEFAULT 0;
